@@ -16,22 +16,20 @@ ShellRoot {
 
         function open(): void {
             root.refreshClients()
-            overviewWindow.visible = true
-            root.forceActiveFocus()
+            root.openOverview()
         }
 
         function close(): void {
-            overviewWindow.visible = false
+            root.requestClose()
         }
 
         function toggle(): void {
-            if (!overviewWindow.visible)
+            if (overviewWindow.visible) {
+                root.requestClose()
+            } else {
                 root.refreshClients()
-
-            overviewWindow.visible = !overviewWindow.visible
-
-            if (overviewWindow.visible)
-                root.forceActiveFocus()
+                root.openOverview()
+            }
         }
     }
 
@@ -54,6 +52,96 @@ ShellRoot {
             id: root
             anchors.fill: parent
             focus: true
+
+            /*
+             * --------------------------------------------------
+             * PRESENTATION / MOTION
+             * --------------------------------------------------
+             *
+             * V1 motion stays deliberately subtle:
+             *
+             *   open  -> short fade + gentle scale to 100%
+             *   close -> short fade + scale down before hiding
+             *
+             * No rotation, bounce, or per-sector choreography.
+             */
+
+            property real presentationProgress: 0.0
+            property bool closing: false
+            property var pendingFocusClient: null
+
+            opacity: presentationProgress
+            scale: 0.97 + (presentationProgress * 0.03)
+            transformOrigin: Item.Center
+
+            Behavior on presentationProgress {
+                NumberAnimation {
+                    duration: 140
+                    easing.type: Easing.OutCubic
+                }
+            }
+
+            function openOverview() {
+                closeAnimationTimer.stop()
+                pendingFocusClient = null
+                closing = false
+
+                presentationProgress = 0.0
+                overviewWindow.visible = true
+                forceActiveFocus()
+
+                // Start the entrance transition after the window is visible.
+                Qt.callLater(function() {
+                    presentationProgress = 1.0
+                })
+            }
+
+            function requestClose(clientToFocus) {
+                if (!overviewWindow.visible || closing)
+                    return
+
+                if (dragActive)
+                    cancelPointerInteraction()
+
+                pendingFocusClient = clientToFocus || null
+                closing = true
+                presentationProgress = 0.0
+                closeAnimationTimer.restart()
+            }
+
+            function dispatchPendingFocus() {
+                const client = pendingFocusClient
+                pendingFocusClient = null
+
+                if (!client || !client.address)
+                    return
+
+                const selector =
+                    "address:" + client.address
+
+                const dispatchExpression =
+                    'hl.dsp.focus({ window = "' +
+                    selector +
+                    '" })'
+
+                Quickshell.execDetached([
+                    "hyprctl",
+                    "dispatch",
+                    dispatchExpression
+                ])
+            }
+
+            Timer {
+                id: closeAnimationTimer
+                interval: 150
+                repeat: false
+
+                onTriggered: {
+                    overviewWindow.visible = false
+                    closing = false
+                    dispatchPendingFocus()
+                }
+            }
 
             /*
              * --------------------------------------------------
@@ -269,6 +357,16 @@ ShellRoot {
                 if (!client || !client.address)
                     return
 
+                /*
+                 * Focus must be dispatched while the selected client
+                 * context is still current. This is the same ordering
+                 * used by the known-good pre-motion implementation.
+                 *
+                 * We intentionally do not delay this action behind the
+                 * close animation: doing so lets Hyprland restore the
+                 * previously focused client when the layer disappears,
+                 * which can defeat the requested cross-workspace focus.
+                 */
                 const selector =
                     "address:" + client.address
 
@@ -283,6 +381,15 @@ ShellRoot {
                     dispatchExpression
                 ])
 
+                /*
+                 * Preserve the original reliable click-to-focus behavior:
+                 * hide immediately after dispatching the focus request.
+                 * Open/Esc motion remains available independently.
+                 */
+                closeAnimationTimer.stop()
+                pendingFocusClient = null
+                closing = false
+                presentationProgress = 0.0
                 overviewWindow.visible = false
             }
 
@@ -738,7 +845,7 @@ ShellRoot {
                 if (root.dragActive) {
                     root.cancelPointerInteraction()
                 } else {
-                    overviewWindow.visible = false
+                    root.requestClose()
                 }
             }
 
@@ -750,7 +857,7 @@ ShellRoot {
                     if (root.dragActive) {
                         root.cancelPointerInteraction()
                     } else {
-                        overviewWindow.visible = false
+                        root.requestClose()
                     }
                 }
             }
