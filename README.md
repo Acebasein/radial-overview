@@ -23,13 +23,13 @@ active windows belonging to each workspace in an adaptive outer ring.
 
 - Hyprland
 - Quickshell
-- `hyprctl`
+- hyprctl
 
 ## Theme format
 
 Themes use a small semantic JSON contract:
 
-```json
+json
 {
   "background": "#111018",
   "surface": "#1a1822",
