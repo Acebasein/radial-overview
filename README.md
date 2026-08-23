@@ -8,6 +8,14 @@ windows belonging to each workspace in an adaptive outer ring.
 It is designed to provide a fast visual overview of the desktop while keeping
 window navigation and workspace management simple.
 
+## Demo
+
+See Radial Overview in action — workspace navigation, window focus,
+drag-and-drop, window-title tooltips, multi-monitor awareness, and live
+Omarchy theme integration.
+
+[▶ Watch the Radial Overview v1.1 demo](https://github.com/Acebasein/radial-overview/releases/download/v1.1.0/radial-overview-v1.1-reddit-theme-demo.mp4)
+
 ## Features
 
 - Radial workspace overview
