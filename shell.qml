@@ -10,6 +10,7 @@ ShellRoot {
         id: theme
     }
 
+
     IpcHandler {
         target: "radialOverview"
 
@@ -99,6 +100,81 @@ ShellRoot {
 
             property var clients: []
             property int clientRevision: 0
+
+            /*
+             * --------------------------------------------------
+             * APPLICATION IDENTITY
+             * --------------------------------------------------
+             *
+             * Quickshell builds its desktop-entry index
+             * asynchronously. Touching applications.values
+             * creates the dependency needed for lookups to
+             * reevaluate when that index becomes available.
+             */
+            property var desktopApplications:
+                DesktopEntries.applications.values
+
+            function desktopEntryFor(client) {
+                if (!client)
+                    return null
+
+                DesktopEntries.applications.values
+
+                const candidates = [
+                    client.initialClass || "",
+                    client.class || ""
+                ]
+
+                for (let i = 0; i < candidates.length; ++i) {
+                    const appClass = candidates[i]
+
+                    if (!appClass)
+                        continue
+
+                    const entry =
+                        DesktopEntries.heuristicLookup(appClass)
+
+                    if (entry)
+                        return entry
+                }
+
+                return null
+            }
+
+            function appIconPathFor(client) {
+                const entry =
+                    desktopEntryFor(client)
+
+                if (!entry || !entry.icon)
+                    return ""
+
+                const raw =
+                    String(entry.icon).trim()
+
+                const iconName =
+                    raw
+                    .replace(/^image:\/\/icon\//, "")
+                    .split("?")[0]
+                    .trim()
+
+                if (!iconName)
+                    return ""
+
+                return Quickshell.iconPath(
+                    iconName,
+                    "image-missing"
+                )
+            }
+
+            function appDisplayNameFor(client) {
+                const entry =
+                    desktopEntryFor(client)
+
+                if (entry && entry.name)
+                    return entry.name
+
+                return shortClassName(client)
+            }
 
             function refreshClients() {
                 clientsProcess.running = false
@@ -991,6 +1067,15 @@ ShellRoot {
                             property var client:
                                 modelData
 
+                            property var desktopEntryDependency:
+                                root.desktopApplications
+
+                            property string appIconPath:
+                                root.appIconPathFor(client)
+
+                            property string appDisplayName:
+                                root.appDisplayNameFor(client)
+
                             property real diameter:
                                 outerWorkspace.diameter
 
@@ -1071,28 +1156,52 @@ ShellRoot {
 
                                     spacing: 2
 
-                                    Text {
+                                    Item {
                                         anchors.horizontalCenter:
                                             parent.horizontalCenter
 
-                                        text:
-                                            root.shortClassName(
-                                                bubbleDelegate.client
-                                            )
-                                            .charAt(0)
-                                            .toUpperCase()
-
-                                        color:
-                                            root.accentColor
-
-                                        font.pixelSize:
+                                        width:
                                             Math.max(
-                                                14,
-                                                bubbleDelegate.diameter
-                                                * 0.27
+                                                24,
+                                                bubbleDelegate.diameter * 0.38
                                             )
 
-                                        font.bold: true
+                                        height: width
+
+                                        Image {
+                                            anchors.fill: parent
+                                            source: bubbleDelegate.appIconPath
+                                            visible: source.toString().length > 0
+                                            fillMode: Image.PreserveAspectFit
+                                            smooth: true
+                                            mipmap: true
+                                        }
+
+                                        Text {
+                                            anchors.centerIn: parent
+
+                                            visible:
+                                                bubbleDelegate.appIconPath.length === 0
+
+                                            text:
+                                                root.shortClassName(
+                                                    bubbleDelegate.client
+                                                )
+                                                .charAt(0)
+                                                .toUpperCase()
+
+                                            color:
+                                                root.accentColor
+
+                                            font.pixelSize:
+                                                Math.max(
+                                                    14,
+                                                    bubbleDelegate.diameter
+                                                    * 0.27
+                                                )
+
+                                            font.bold: true
+                                        }
                                     }
 
                                     Text {
@@ -1109,9 +1218,7 @@ ShellRoot {
                                             Text.ElideRight
 
                                         text:
-                                            root.shortClassName(
-                                                bubbleDelegate.client
-                                            )
+                                            bubbleDelegate.appDisplayName
 
                                         color:
                                             root.foregroundColor
@@ -1283,24 +1390,50 @@ ShellRoot {
 
                     spacing: 2
 
-                    Text {
+                    Item {
                         anchors.horizontalCenter:
                             parent.horizontalCenter
 
-                        text:
+                        width: 30
+                        height: 30
+
+                        property var desktopEntryDependency:
+                            root.desktopApplications
+
+                        property string iconPath:
                             root.draggedClient
-                            ? root.shortClassName(
-                                root.draggedClient
-                            )
-                            .charAt(0)
-                            .toUpperCase()
+                            ? root.appIconPathFor(root.draggedClient)
                             : ""
 
-                        color:
-                            root.accentColor
+                        Image {
+                            anchors.fill: parent
+                            source: parent.iconPath
+                            visible: source.toString().length > 0
+                            fillMode: Image.PreserveAspectFit
+                            smooth: true
+                            mipmap: true
+                        }
 
-                        font.pixelSize: 22
-                        font.bold: true
+                        Text {
+                            anchors.centerIn: parent
+
+                            visible: parent.iconPath.length === 0
+
+                            text:
+                                root.draggedClient
+                                ? root.shortClassName(
+                                    root.draggedClient
+                                )
+                                .charAt(0)
+                                .toUpperCase()
+                                : ""
+
+                            color:
+                                root.accentColor
+
+                            font.pixelSize: 22
+                            font.bold: true
+                        }
                     }
 
                     Text {
@@ -1318,7 +1451,7 @@ ShellRoot {
 
                         text:
                             root.draggedClient
-                            ? root.shortClassName(
+                            ? root.appDisplayNameFor(
                                 root.draggedClient
                             )
                             : ""
