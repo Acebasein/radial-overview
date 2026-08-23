@@ -14,7 +14,7 @@ See Radial Overview in action — workspace navigation, window focus,
 drag-and-drop, window-title tooltips, multi-monitor awareness, and live
 Omarchy theme integration.
 
-[▶ Watch the Radial Overview v1.1 demo](https://github.com/Acebasein/radial-overview/releases/download/v1.1.0/radial-overview-v1.1-reddit-theme-demo.mp4)
+https://github.com/user-attachments/assets/5b701a39-057f-44fc-a34b-90fad811e74c
 
 ## Features
 
