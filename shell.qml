@@ -180,6 +180,7 @@ ShellRoot {
             property color mutedColor: theme.muted
             property color bubbleBackground: theme.surface
             property color dropHighlightColor: theme.dropHighlight
+            property color accentSecondaryColor: theme.accentSecondary
             /*
              * --------------------------------------------------
              * CLIENT DATA
@@ -188,6 +189,55 @@ ShellRoot {
 
             property var clients: []
             property int clientRevision: 0
+
+            /*
+             * --------------------------------------------------
+             * MULTI-MONITOR TOPOLOGY
+             * --------------------------------------------------
+             *
+             * Hyprland owns normal workspaces per monitor. We only
+             * surface that ownership here; Radial Overview does not
+             * alter Hyprland's monitor/workspace model.
+             *
+             * With one connected monitor the UI remains unchanged.
+             * With two or more monitors, occupied/active workspaces
+             * show the owning Hyprland monitor name.
+             */
+            property var monitors: []
+            property var hyprWorkspaces: []
+            property int topologyRevision: 0
+
+            readonly property int monitorCount:
+                monitors.length
+
+            function workspaceMonitorName(workspaceId) {
+                const revision = topologyRevision
+
+                for (let i = 0; i < hyprWorkspaces.length; ++i) {
+                    const workspace = hyprWorkspaces[i]
+
+                    if (workspace.id === workspaceId)
+                        return workspace.monitor || ""
+                }
+
+                return ""
+            }
+
+            function isFocusedMonitor(monitorName) {
+                const revision = topologyRevision
+
+                if (!monitorName)
+                    return false
+
+                for (let i = 0; i < monitors.length; ++i) {
+                    const monitor = monitors[i]
+
+                    if (monitor.name === monitorName)
+                        return monitor.focused === true
+                }
+
+                return false
+            }
 
             /*
              * --------------------------------------------------
@@ -315,6 +365,16 @@ ShellRoot {
             function refreshClients() {
                 clientsProcess.running = false
                 clientsProcess.running = true
+
+                refreshDisplayTopology()
+            }
+
+            function refreshDisplayTopology() {
+                monitorsProcess.running = false
+                workspacesProcess.running = false
+
+                monitorsProcess.running = true
+                workspacesProcess.running = true
             }
 
             function windowCountForWorkspace(workspaceId) {
@@ -876,6 +936,74 @@ ShellRoot {
 
             /*
              * --------------------------------------------------
+             * HYPRLAND MONITOR / WORKSPACE TOPOLOGY
+             * --------------------------------------------------
+             */
+
+            Process {
+                id: monitorsProcess
+
+                running: false
+
+                command: [
+                    "hyprctl",
+                    "monitors",
+                    "-j"
+                ]
+
+                stdout: StdioCollector {
+                    onStreamFinished: {
+                        try {
+                            root.monitors =
+                                JSON.parse(this.text)
+
+                            root.topologyRevision++
+                        } catch (error) {
+                            console.log(
+                                "Radial Overview monitor parse error:",
+                                error
+                            )
+
+                            root.monitors = []
+                            root.topologyRevision++
+                        }
+                    }
+                }
+            }
+
+            Process {
+                id: workspacesProcess
+
+                running: false
+
+                command: [
+                    "hyprctl",
+                    "workspaces",
+                    "-j"
+                ]
+
+                stdout: StdioCollector {
+                    onStreamFinished: {
+                        try {
+                            root.hyprWorkspaces =
+                                JSON.parse(this.text)
+
+                            root.topologyRevision++
+                        } catch (error) {
+                            console.log(
+                                "Radial Overview workspace topology parse error:",
+                                error
+                            )
+
+                            root.hyprWorkspaces = []
+                            root.topologyRevision++
+                        }
+                    }
+                }
+            }
+
+            /*
+             * --------------------------------------------------
              * KEYBOARD
              * --------------------------------------------------
              */
@@ -1110,6 +1238,16 @@ ShellRoot {
                         && root.dragTargetWorkspace
                         === workspaceId
 
+                    property string monitorName:
+                        root.workspaceMonitorName(
+                            workspaceId
+                        )
+
+                    property bool monitorFocused:
+                        root.isFocusedMonitor(
+                            monitorName
+                        )
+
                     property real step:
                         (Math.PI * 2)
                         / root.workspaceCount
@@ -1127,8 +1265,8 @@ ShellRoot {
                             + root.innerOuterRadius
                         ) / 2
 
-                    width: 110
-                    height: 72
+                    width: 124
+                    height: 92
 
                     x:
                         root.centerX
@@ -1198,6 +1336,30 @@ ShellRoot {
 
                             font.pixelSize: 12
                         }
+
+                        Text {
+                            anchors.horizontalCenter:
+                                parent.horizontalCenter
+
+                            visible:
+                                root.monitorCount > 1
+                                && workspaceDelegate.monitorName !== ""
+
+                            text:
+                                "▣ "
+                                + workspaceDelegate.monitorName
+
+                            color:
+                                root.foregroundColor
+                            // workspaceDelegate.monitorFocused
+                                // ? root.accentColor
+                                // : root.mutedColor
+
+                            font.pixelSize: 10
+                            font.bold:
+                               workspaceDelegate.monitorFocused
+ 
+                         }
                     }
                 }
             }
