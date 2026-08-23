@@ -1,65 +1,47 @@
 import Quickshell.Io
 import QtQuick
 
+import "adapters" as Adapters
+
 QtObject {
     id: theme
 
     /*
      * --------------------------------------------------
-     * UNIVERSAL RADIAL OVERVIEW THEME CONTRACT
+     * RADIAL OVERVIEW THEME MANAGER
      * --------------------------------------------------
      *
-     * Radial Overview only consumes semantic properties.
-     * The source could eventually be:
+     * Priority for V1.1:
      *
-     *   - custom JSON
-     *   - Omarchy adapter
-     *   - Noctalia adapter
-     *   - DMS adapter
-     *   - Stylix / Matugen / pywal adapter
+     *   1. Known environment adapter
+     *   2. Generic JSON theme
      *
-     * The UI itself never needs to know the source.
+     * shell.qml knows nothing about the source.
      */
 
-    readonly property color background:
-        palette.background
-
-    readonly property color surface:
-        palette.surface
-
-    readonly property color surfaceHover:
-        palette.surfaceHover
-
-    readonly property color foreground:
-        palette.foreground
-
-    readonly property color muted:
-        palette.muted
-
-    readonly property color accent:
-        palette.accent
-
-    readonly property color accentSecondary:
-        palette.accentSecondary
-
-    readonly property color border:
-        palette.border
-
-    readonly property color dropHighlight:
-        palette.dropHighlight
-
+    readonly property string source:
+        omarchy.loaded
+        ? "omarchy"
+        : "default"
 
     /*
      * --------------------------------------------------
-     * THEME FILE
+     * OMARCHY ADAPTER
      * --------------------------------------------------
-     *
-     * Qt.resolvedUrl() makes this path relative to
-     * Theme.qml rather than wherever qs was launched.
      */
 
-    property FileView themeFile: FileView {
-        id: fileView
+    property Adapters.OmarchyAdapter omarchy:
+        Adapters.OmarchyAdapter {
+        }
+
+    /*
+     * --------------------------------------------------
+     * GENERIC JSON FALLBACK
+     * --------------------------------------------------
+     */
+
+    property FileView defaultThemeFile: FileView {
+        id: defaultFile
 
         path:
             Qt.resolvedUrl(
@@ -69,49 +51,16 @@ QtObject {
         preload: true
         watchChanges: true
 
-        /*
-         * Quickshell emits fileChanged when the file
-         * changes on disk.
-         *
-         * reload() then causes JsonAdapter to receive
-         * the new JSON values.
-         */
         onFileChanged: {
             console.log(
-                "Radial Overview: theme file changed"
+                "Radial Overview: default theme changed"
             )
 
             reload()
         }
 
-        onLoaded: {
-            console.log(
-                "Radial Overview: theme loaded"
-            )
-        }
-
-        onLoadFailed: function(error) {
-            console.log(
-                "Radial Overview: theme load failed:",
-                error
-            )
-        }
-
-
-        /*
-         * --------------------------------------------------
-         * JSON ADAPTER
-         * --------------------------------------------------
-         *
-         * These strings correspond directly to the keys
-         * in themes/default.json.
-         *
-         * JsonAdapter automatically updates them whenever
-         * FileView reloads the JSON.
-         */
-
         JsonAdapter {
-            id: palette
+            id: fallback
 
             property string background:
                 "#111018"
@@ -139,27 +88,77 @@ QtObject {
 
             property string dropHighlight:
                 "#362454"
-
-
-            /*
-             * Diagnostics.
-             *
-             * Once we're happy with V1 we can remove these.
-             */
-
-            onAccentChanged: {
-                console.log(
-                    "Radial Overview: accent changed to",
-                    accent
-                )
-            }
-
-            onBackgroundChanged: {
-                console.log(
-                    "Radial Overview: background changed to",
-                    background
-                )
-            }
         }
+    }
+
+    /*
+     * --------------------------------------------------
+     * PUBLIC SEMANTIC CONTRACT
+     * --------------------------------------------------
+     *
+     * These are the ONLY properties shell.qml consumes.
+     */
+
+    readonly property color background:
+        omarchy.loaded
+        ? omarchy.background
+        : fallback.background
+
+    readonly property color surface:
+        omarchy.loaded
+        ? omarchy.surface
+        : fallback.surface
+
+    readonly property color surfaceHover:
+        omarchy.loaded
+        ? omarchy.surfaceHover
+        : fallback.surfaceHover
+
+    readonly property color foreground:
+        omarchy.loaded
+        ? omarchy.foreground
+        : fallback.foreground
+
+    readonly property color muted:
+        omarchy.loaded
+        ? omarchy.muted
+        : fallback.muted
+
+    readonly property color accent:
+        omarchy.loaded
+        ? omarchy.accent
+        : fallback.accent
+
+    readonly property color accentSecondary:
+        omarchy.loaded
+        ? omarchy.accentSecondary
+        : fallback.accentSecondary
+
+    readonly property color border:
+        omarchy.loaded
+        ? omarchy.border
+        : fallback.border
+
+    readonly property color dropHighlight:
+        omarchy.loaded
+        ? omarchy.dropHighlight
+        : fallback.dropHighlight
+
+    /*
+     * Diagnostics for development branch.
+     */
+
+    onSourceChanged: {
+        console.log(
+            "Radial Overview: theme source:",
+            source
+        )
+    }
+
+    onAccentChanged: {
+        console.log(
+            "Radial Overview: active accent:",
+            accent
+        )
     }
 }
