@@ -145,11 +145,30 @@ ShellRoot {
                 const entry =
                     desktopEntryFor(client)
 
-                if (!entry || !entry.icon)
+                let iconEntry = entry
+
+                /*
+                 * Browser-created web apps can expose a unique
+                 * window class instead of the browser desktop ID.
+                 * Keep the app-specific label, but inherit the
+                 * browser icon when possible.
+                 */
+                if (!iconEntry && client) {
+                    const appClass = String(
+                        client.initialClass
+                        || client.class
+                        || ""
+                    ).toLowerCase()
+
+                    if (appClass.startsWith("brave-"))
+                        iconEntry = DesktopEntries.heuristicLookup("brave-origin")
+                }
+
+                if (!iconEntry || !iconEntry.icon)
                     return ""
 
                 const raw =
-                    String(entry.icon).trim()
+                    String(iconEntry.icon).trim()
 
                 const iconName =
                     raw
@@ -172,6 +191,21 @@ ShellRoot {
 
                 if (entry && entry.name)
                     return entry.name
+
+                /*
+                 * For unmatched web apps, the window title is often
+                 * much friendlier than the generated WM class.
+                 */
+                if (client && client.title) {
+                    const title = String(client.title).trim()
+                    const dashParts = title.split(" — ")
+
+                    if (dashParts.length > 1)
+                        return dashParts[dashParts.length - 1]
+
+                    if (title.length > 0)
+                        return title
+                }
 
                 return shortClassName(client)
             }
@@ -1162,8 +1196,8 @@ ShellRoot {
 
                                         width:
                                             Math.max(
-                                                24,
-                                                bubbleDelegate.diameter * 0.38
+                                                26,
+                                                bubbleDelegate.diameter * 0.46
                                             )
 
                                         height: width
@@ -1217,6 +1251,10 @@ ShellRoot {
                                         elide:
                                             Text.ElideRight
 
+                                        visible:
+                                            bubbleDelegate.diameter
+                                            >= 58
+
                                         text:
                                             bubbleDelegate.appDisplayName
 
@@ -1249,7 +1287,7 @@ ShellRoot {
 
                                         visible:
                                             bubbleDelegate.diameter
-                                            >= 82
+                                            >= 96
 
                                         text:
                                             root.shortTitle(
@@ -1394,8 +1432,8 @@ ShellRoot {
                         anchors.horizontalCenter:
                             parent.horizontalCenter
 
-                        width: 30
-                        height: 30
+                        width: 36
+                        height: 36
 
                         property var desktopEntryDependency:
                             root.desktopApplications
