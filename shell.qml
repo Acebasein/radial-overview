@@ -10,27 +10,26 @@ ShellRoot {
         id: theme
     }
 
+
     IpcHandler {
         target: "radialOverview"
 
         function open(): void {
             root.refreshClients()
-            overviewWindow.visible = true
-            root.forceActiveFocus()
+            root.openOverview()
         }
 
         function close(): void {
-            overviewWindow.visible = false
+            root.requestClose()
         }
 
         function toggle(): void {
-            if (!overviewWindow.visible)
+            if (overviewWindow.visible) {
+                root.requestClose()
+            } else {
                 root.refreshClients()
-
-            overviewWindow.visible = !overviewWindow.visible
-
-            if (overviewWindow.visible)
-                root.forceActiveFocus()
+                root.openOverview()
+            }
         }
     }
 
@@ -53,6 +52,96 @@ ShellRoot {
             id: root
             anchors.fill: parent
             focus: true
+
+            /*
+             * --------------------------------------------------
+             * PRESENTATION / MOTION
+             * --------------------------------------------------
+             *
+             * V1 motion stays deliberately subtle:
+             *
+             *   open  -> short fade + gentle scale to 100%
+             *   close -> short fade + scale down before hiding
+             *
+             * No rotation, bounce, or per-sector choreography.
+             */
+
+            property real presentationProgress: 0.0
+            property bool closing: false
+            property var pendingFocusClient: null
+
+            opacity: presentationProgress
+            scale: 0.97 + (presentationProgress * 0.03)
+            transformOrigin: Item.Center
+
+            Behavior on presentationProgress {
+                NumberAnimation {
+                    duration: 140
+                    easing.type: Easing.OutCubic
+                }
+            }
+
+            function openOverview() {
+                closeAnimationTimer.stop()
+                pendingFocusClient = null
+                closing = false
+
+                presentationProgress = 0.0
+                overviewWindow.visible = true
+                forceActiveFocus()
+
+                // Start the entrance transition after the window is visible.
+                Qt.callLater(function() {
+                    presentationProgress = 1.0
+                })
+            }
+
+            function requestClose(clientToFocus) {
+                if (!overviewWindow.visible || closing)
+                    return
+
+                if (dragActive)
+                    cancelPointerInteraction()
+
+                pendingFocusClient = clientToFocus || null
+                closing = true
+                presentationProgress = 0.0
+                closeAnimationTimer.restart()
+            }
+
+            function dispatchPendingFocus() {
+                const client = pendingFocusClient
+                pendingFocusClient = null
+
+                if (!client || !client.address)
+                    return
+
+                const selector =
+                    "address:" + client.address
+
+                const dispatchExpression =
+                    'hl.dsp.focus({ window = "' +
+                    selector +
+                    '" })'
+
+                Quickshell.execDetached([
+                    "hyprctl",
+                    "dispatch",
+                    dispatchExpression
+                ])
+            }
+
+            Timer {
+                id: closeAnimationTimer
+                interval: 150
+                repeat: false
+
+                onTriggered: {
+                    overviewWindow.visible = false
+                    closing = false
+                    dispatchPendingFocus()
+                }
+            }
 
             /*
              * --------------------------------------------------
@@ -91,6 +180,7 @@ ShellRoot {
             property color mutedColor: theme.muted
             property color bubbleBackground: theme.surface
             property color dropHighlightColor: theme.dropHighlight
+            property color accentSecondaryColor: theme.accentSecondary
             /*
              * --------------------------------------------------
              * CLIENT DATA
@@ -100,9 +190,191 @@ ShellRoot {
             property var clients: []
             property int clientRevision: 0
 
+            /*
+             * --------------------------------------------------
+             * MULTI-MONITOR TOPOLOGY
+             * --------------------------------------------------
+             *
+             * Hyprland owns normal workspaces per monitor. We only
+             * surface that ownership here; Radial Overview does not
+             * alter Hyprland's monitor/workspace model.
+             *
+             * With one connected monitor the UI remains unchanged.
+             * With two or more monitors, occupied/active workspaces
+             * show the owning Hyprland monitor name.
+             */
+            property var monitors: []
+            property var hyprWorkspaces: []
+            property int topologyRevision: 0
+
+            readonly property int monitorCount:
+                monitors.length
+
+            function workspaceMonitorName(workspaceId) {
+                const revision = topologyRevision
+
+                for (let i = 0; i < hyprWorkspaces.length; ++i) {
+                    const workspace = hyprWorkspaces[i]
+
+                    if (workspace.id === workspaceId)
+                        return workspace.monitor || ""
+                }
+
+                return ""
+            }
+
+            function isFocusedMonitor(monitorName) {
+                const revision = topologyRevision
+
+                if (!monitorName)
+                    return false
+
+                for (let i = 0; i < monitors.length; ++i) {
+                    const monitor = monitors[i]
+
+                    if (monitor.name === monitorName)
+                        return monitor.focused === true
+                }
+
+                return false
+            }
+
+            /*
+             * --------------------------------------------------
+             * APPLICATION IDENTITY
+             * --------------------------------------------------
+             *
+             * Quickshell builds its desktop-entry index
+             * asynchronously. Touching applications.values
+             * creates the dependency needed for lookups to
+             * reevaluate when that index becomes available.
+             */
+            property var desktopApplications:
+                DesktopEntries.applications.values
+
+            function desktopEntryFor(client) {
+                if (!client)
+                    return null
+
+                DesktopEntries.applications.values
+
+                const candidates = [
+                    client.initialClass || "",
+                    client.class || ""
+                ]
+
+                for (let i = 0; i < candidates.length; ++i) {
+                    const appClass = candidates[i]
+
+                    if (!appClass)
+                        continue
+
+                    const entry =
+                        DesktopEntries.heuristicLookup(appClass)
+
+                    if (entry)
+                        return entry
+                }
+
+                return null
+            }
+
+            function appIconPathFor(client) {
+                const entry =
+                    desktopEntryFor(client)
+
+                let iconEntry = entry
+
+                /*
+                 * Browser-created web apps can expose a unique
+                 * window class instead of the browser desktop ID.
+                 * Keep the app-specific label, but inherit the
+                 * browser icon when possible.
+                 */
+                if (!iconEntry && client) {
+                    const appClass = String(
+                        client.initialClass
+                        || client.class
+                        || ""
+                    ).toLowerCase()
+
+                    if (appClass.startsWith("brave-"))
+                        iconEntry = DesktopEntries.heuristicLookup("brave-origin")
+                }
+
+                if (!iconEntry || !iconEntry.icon)
+                    return ""
+
+                const raw =
+                    String(iconEntry.icon).trim()
+
+                const iconName =
+                    raw
+                    .replace(/^image:\/\/icon\//, "")
+                    .split("?")[0]
+                    .trim()
+
+                if (!iconName)
+                    return ""
+
+                return Quickshell.iconPath(
+                    iconName,
+                    "image-missing"
+                )
+            }
+
+            function appDisplayNameFor(client) {
+                const entry =
+                    desktopEntryFor(client)
+
+                if (entry && entry.name)
+                    return entry.name
+
+                /*
+                 * For unmatched web apps, the window title is often
+                 * much friendlier than the generated WM class.
+                 */
+                if (client && client.title) {
+                    const title = String(client.title).trim()
+                    const dashParts = title.split(" — ")
+
+                    if (dashParts.length > 1)
+                        return dashParts[dashParts.length - 1]
+
+                    if (title.length > 0)
+                        return title
+                }
+
+                return shortClassName(client)
+            }
+
+            function isFocusedClient(client) {
+                if (!client)
+                    return false
+
+                /*
+                 * hyprctl clients -j exposes focusHistoryID.
+                 * The currently focused normal Hyprland client is
+                 * represented by focusHistoryID === 0. The Overview
+                 * itself is a layer surface, so opening it does not
+                 * replace that client in the Hyprland client list.
+                 */
+                return client.focusHistoryID === 0
+            }
+
             function refreshClients() {
                 clientsProcess.running = false
                 clientsProcess.running = true
+
+                refreshDisplayTopology()
+            }
+
+            function refreshDisplayTopology() {
+                monitorsProcess.running = false
+                workspacesProcess.running = false
+
+                monitorsProcess.running = true
+                workspacesProcess.running = true
             }
 
             function windowCountForWorkspace(workspaceId) {
@@ -145,6 +417,16 @@ ShellRoot {
                 if (!client || !client.address)
                     return
 
+                /*
+                 * Focus must be dispatched while the selected client
+                 * context is still current. This is the same ordering
+                 * used by the known-good pre-motion implementation.
+                 *
+                 * We intentionally do not delay this action behind the
+                 * close animation: doing so lets Hyprland restore the
+                 * previously focused client when the layer disappears,
+                 * which can defeat the requested cross-workspace focus.
+                 */
                 const selector =
                     "address:" + client.address
 
@@ -159,6 +441,15 @@ ShellRoot {
                     dispatchExpression
                 ])
 
+                /*
+                 * Preserve the original reliable click-to-focus behavior:
+                 * hide immediately after dispatching the focus request.
+                 * Open/Esc motion remains available independently.
+                 */
+                closeAnimationTimer.stop()
+                pendingFocusClient = null
+                closing = false
+                presentationProgress = 0.0
                 overviewWindow.visible = false
             }
 
@@ -210,6 +501,7 @@ ShellRoot {
              */
 
             property bool dragActive: false
+            property bool dropFeedbackActive: false
             property var draggedClient: null
 
             property real dragX: 0
@@ -225,6 +517,9 @@ ShellRoot {
                 radialCanvas.requestPaint()
 
             onDragActiveChanged:
+                radialCanvas.requestPaint()
+
+            onDropFeedbackActiveChanged:
                 radialCanvas.requestPaint()
 
             /*
@@ -349,17 +644,38 @@ ShellRoot {
                         )
 
                     if (target > 0) {
+                        /*
+                         * Move immediately, but keep a short-lived
+                         * visual proxy at the release point. This hides
+                         * the abrupt source/destination reflow while
+                         * Hyprland and the client model update.
+                         */
+                        dragX = px
+                        dragY = py
+                        dragTargetWorkspace = target
+
                         moveClientToWorkspace(
                             client,
                             target
                         )
+
+                        dragActive = false
+                        dropFeedbackActive = true
+                        dropFeedbackTimer.restart()
+
+                        radialCanvas.requestPaint()
+                        return
                     }
-                } else {
-                    focusClient(client)
+
+                    cancelPointerInteraction()
+                    return
                 }
+
+                focusClient(client)
 
                 draggedClient = null
                 dragActive = false
+                dropFeedbackActive = false
                 dragTargetWorkspace = 0
 
                 radialCanvas.requestPaint()
@@ -368,9 +684,23 @@ ShellRoot {
             function cancelPointerInteraction() {
                 draggedClient = null
                 dragActive = false
+                dropFeedbackActive = false
                 dragTargetWorkspace = 0
 
                 radialCanvas.requestPaint()
+            }
+
+            Timer {
+                id: dropFeedbackTimer
+                interval: 150
+                repeat: false
+
+                onTriggered: {
+                    root.dropFeedbackActive = false
+                    root.draggedClient = null
+                    root.dragTargetWorkspace = 0
+                    radialCanvas.requestPaint()
+                }
             }
 
             /*
@@ -606,6 +936,74 @@ ShellRoot {
 
             /*
              * --------------------------------------------------
+             * HYPRLAND MONITOR / WORKSPACE TOPOLOGY
+             * --------------------------------------------------
+             */
+
+            Process {
+                id: monitorsProcess
+
+                running: false
+
+                command: [
+                    "hyprctl",
+                    "monitors",
+                    "-j"
+                ]
+
+                stdout: StdioCollector {
+                    onStreamFinished: {
+                        try {
+                            root.monitors =
+                                JSON.parse(this.text)
+
+                            root.topologyRevision++
+                        } catch (error) {
+                            console.log(
+                                "Radial Overview monitor parse error:",
+                                error
+                            )
+
+                            root.monitors = []
+                            root.topologyRevision++
+                        }
+                    }
+                }
+            }
+
+            Process {
+                id: workspacesProcess
+
+                running: false
+
+                command: [
+                    "hyprctl",
+                    "workspaces",
+                    "-j"
+                ]
+
+                stdout: StdioCollector {
+                    onStreamFinished: {
+                        try {
+                            root.hyprWorkspaces =
+                                JSON.parse(this.text)
+
+                            root.topologyRevision++
+                        } catch (error) {
+                            console.log(
+                                "Radial Overview workspace topology parse error:",
+                                error
+                            )
+
+                            root.hyprWorkspaces = []
+                            root.topologyRevision++
+                        }
+                    }
+                }
+            }
+
+            /*
+             * --------------------------------------------------
              * KEYBOARD
              * --------------------------------------------------
              */
@@ -614,7 +1012,7 @@ ShellRoot {
                 if (root.dragActive) {
                     root.cancelPointerInteraction()
                 } else {
-                    overviewWindow.visible = false
+                    root.requestClose()
                 }
             }
 
@@ -626,7 +1024,7 @@ ShellRoot {
                     if (root.dragActive) {
                         root.cancelPointerInteraction()
                     } else {
-                        overviewWindow.visible = false
+                        root.requestClose()
                     }
                 }
             }
@@ -674,7 +1072,7 @@ ShellRoot {
                      * including both inner and outer rings.
                      */
 
-                    if (root.dragActive
+                    if ((root.dragActive || root.dropFeedbackActive)
                             && root.dragTargetWorkspace > 0) {
 
                         const targetIndex =
@@ -836,9 +1234,19 @@ ShellRoot {
                         === workspaceId
 
                     property bool dropTarget:
-                        root.dragActive
+                        (root.dragActive || root.dropFeedbackActive)
                         && root.dragTargetWorkspace
                         === workspaceId
+
+                    property string monitorName:
+                        root.workspaceMonitorName(
+                            workspaceId
+                        )
+
+                    property bool monitorFocused:
+                        root.isFocusedMonitor(
+                            monitorName
+                        )
 
                     property real step:
                         (Math.PI * 2)
@@ -857,8 +1265,8 @@ ShellRoot {
                             + root.innerOuterRadius
                         ) / 2
 
-                    width: 110
-                    height: 72
+                    width: 124
+                    height: 92
 
                     x:
                         root.centerX
@@ -928,6 +1336,30 @@ ShellRoot {
 
                             font.pixelSize: 12
                         }
+
+                        Text {
+                            anchors.horizontalCenter:
+                                parent.horizontalCenter
+
+                            visible:
+                                root.monitorCount > 1
+                                && workspaceDelegate.monitorName !== ""
+
+                            text:
+                                "▣ "
+                                + workspaceDelegate.monitorName
+
+                            color:
+                                root.foregroundColor
+                            // workspaceDelegate.monitorFocused
+                                // ? root.accentColor
+                                // : root.mutedColor
+
+                            font.pixelSize: 10
+                            font.bold:
+                               workspaceDelegate.monitorFocused
+ 
+                         }
                     }
                 }
             }
@@ -991,6 +1423,20 @@ ShellRoot {
                             property var client:
                                 modelData
 
+                            property var desktopEntryDependency:
+                                root.desktopApplications
+
+                            property string appIconPath:
+                                root.appIconPathFor(client)
+
+                            property string appDisplayName:
+                                root.appDisplayNameFor(client)
+
+                            property bool focused:
+                                root.isFocusedClient(client)
+
+                            property bool tooltipReady: false
+
                             property real diameter:
                                 outerWorkspace.diameter
 
@@ -1020,6 +1466,56 @@ ShellRoot {
                                 * root.windowRingRadius
                                 - height / 2
 
+                            z:
+                                bubbleMouse.containsMouse
+                                ? 100
+                                : 0
+
+                            Timer {
+                                id: tooltipTimer
+                                interval: 400
+                                repeat: false
+
+                                onTriggered: {
+                                    if (bubbleMouse.containsMouse
+                                        && !root.dragActive)
+                                        bubbleDelegate.tooltipReady = true
+                                }
+                            }
+
+                            Rectangle {
+                                id: focusHalo
+
+                                visible:
+                                    bubbleDelegate.focused
+                                    && !(
+                                        root.dragActive
+                                        && root.draggedClient
+                                        && root.draggedClient.address
+                                        === bubbleDelegate.client.address
+                                    )
+
+                                z: -1
+
+                                x: -5
+                                y: -5
+                                width: parent.width + 10
+                                height: parent.height + 10
+
+                                radius: width / 2
+                                color: "transparent"
+
+                                border.width: 2
+                                border.color: root.accentColor
+                                opacity: 0.55
+
+                                Behavior on opacity {
+                                    NumberAnimation {
+                                        duration: 120
+                                    }
+                                }
+                            }
+
                             Rectangle {
                                 id: bubble
 
@@ -1030,12 +1526,18 @@ ShellRoot {
                                     width / 2
 
                                 color:
-                                    bubbleMouse.containsMouse
+                                    (
+                                        bubbleMouse.containsMouse
+                                        || bubbleDelegate.focused
+                                    )
                                     ? theme.surfaceHover
                                     : root.bubbleBackground
 
                                 border.width:
-                                    bubbleMouse.containsMouse
+                                    (
+                                        bubbleMouse.containsMouse
+                                        || bubbleDelegate.focused
+                                    )
                                     ? 3
                                     : 2
 
@@ -1044,11 +1546,15 @@ ShellRoot {
 
                                 scale:
                                     bubbleMouse.containsMouse
-                                    ? 1.06
-                                    : 1.0
+                                    ? 1.07
+                                    : (
+                                        bubbleDelegate.focused
+                                        ? 1.035
+                                        : 1.0
+                                    )
 
                                 opacity:
-                                    root.dragActive
+                                    (root.dragActive || root.dropFeedbackActive)
                                     && root.draggedClient
                                     && root.draggedClient.address
                                     === bubbleDelegate.client.address
@@ -1071,28 +1577,52 @@ ShellRoot {
 
                                     spacing: 2
 
-                                    Text {
+                                    Item {
                                         anchors.horizontalCenter:
                                             parent.horizontalCenter
 
-                                        text:
-                                            root.shortClassName(
-                                                bubbleDelegate.client
-                                            )
-                                            .charAt(0)
-                                            .toUpperCase()
-
-                                        color:
-                                            root.accentColor
-
-                                        font.pixelSize:
+                                        width:
                                             Math.max(
-                                                14,
-                                                bubbleDelegate.diameter
-                                                * 0.27
+                                                26,
+                                                bubbleDelegate.diameter * 0.46
                                             )
 
-                                        font.bold: true
+                                        height: width
+
+                                        Image {
+                                            anchors.fill: parent
+                                            source: bubbleDelegate.appIconPath
+                                            visible: source.toString().length > 0
+                                            fillMode: Image.PreserveAspectFit
+                                            smooth: true
+                                            mipmap: true
+                                        }
+
+                                        Text {
+                                            anchors.centerIn: parent
+
+                                            visible:
+                                                bubbleDelegate.appIconPath.length === 0
+
+                                            text:
+                                                root.shortClassName(
+                                                    bubbleDelegate.client
+                                                )
+                                                .charAt(0)
+                                                .toUpperCase()
+
+                                            color:
+                                                root.accentColor
+
+                                            font.pixelSize:
+                                                Math.max(
+                                                    14,
+                                                    bubbleDelegate.diameter
+                                                    * 0.27
+                                                )
+
+                                            font.bold: true
+                                        }
                                     }
 
                                     Text {
@@ -1108,13 +1638,17 @@ ShellRoot {
                                         elide:
                                             Text.ElideRight
 
+                                        visible:
+                                            bubbleDelegate.diameter
+                                            >= 58
+
                                         text:
-                                            root.shortClassName(
-                                                bubbleDelegate.client
-                                            )
+                                            bubbleDelegate.appDisplayName
 
                                         color:
-                                            root.foregroundColor
+                                            bubbleDelegate.focused
+                                            ? root.accentColor
+                                            : root.foregroundColor
 
                                         font.pixelSize:
                                             Math.max(
@@ -1142,7 +1676,7 @@ ShellRoot {
 
                                         visible:
                                             bubbleDelegate.diameter
-                                            >= 82
+                                            >= 96
 
                                         text:
                                             root.shortTitle(
@@ -1153,6 +1687,127 @@ ShellRoot {
                                             root.mutedColor
 
                                         font.pixelSize: 9
+                                    }
+                                }
+
+                                Rectangle {
+                                    visible: bubbleDelegate.focused
+
+                                    anchors.horizontalCenter:
+                                        parent.horizontalCenter
+
+                                    anchors.bottom:
+                                        parent.bottom
+
+                                    anchors.bottomMargin:
+                                        Math.max(5, parent.height * 0.07)
+
+                                    width:
+                                        Math.max(5, parent.width * 0.07)
+
+                                    height: width
+                                    radius: width / 2
+                                    color: root.accentColor
+                                }
+
+                                Rectangle {
+                                    id: windowTooltip
+
+                                    visible:
+                                        bubbleDelegate.tooltipReady
+                                        && bubbleMouse.containsMouse
+                                        && !root.dragActive
+                                        && !root.dropFeedbackActive
+
+                                    z: 1000
+
+                                    width:
+                                        Math.min(
+                                            320,
+                                            Math.max(
+                                                180,
+                                                tooltipContent.implicitWidth + 24
+                                            )
+                                        )
+
+                                    height:
+                                        tooltipContent.implicitHeight + 18
+
+                                    x: {
+                                        const preferred =
+                                            (bubble.width - width) / 2
+
+                                        const minimum =
+                                            -bubbleDelegate.x + 12
+
+                                        const maximum =
+                                            root.width
+                                            - bubbleDelegate.x
+                                            - width
+                                            - 12
+
+                                        return Math.max(
+                                            minimum,
+                                            Math.min(preferred, maximum)
+                                        )
+                                    }
+
+                                    y:
+                                        bubbleDelegate.y
+                                        + bubble.height
+                                        + height
+                                        + 12
+                                        > root.height
+                                        ? -height - 10
+                                        : bubble.height + 10
+
+                                    radius: 8
+                                    color: root.bubbleBackground
+
+                                    border.width: 1
+                                    border.color: root.accentColor
+
+                                    opacity: visible ? 1.0 : 0.0
+
+                                    Behavior on opacity {
+                                        NumberAnimation {
+                                            duration: 90
+                                        }
+                                    }
+
+                                    Column {
+                                        id: tooltipContent
+
+                                        anchors {
+                                            left: parent.left
+                                            right: parent.right
+                                            verticalCenter: parent.verticalCenter
+                                            margins: 12
+                                        }
+
+                                        spacing: 3
+
+                                        Text {
+                                            width: parent.width
+                                            text: bubbleDelegate.appDisplayName
+                                            color: root.foregroundColor
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Text {
+                                            width: parent.width
+                                            text:
+                                                bubbleDelegate.client
+                                                && bubbleDelegate.client.title
+                                                ? String(bubbleDelegate.client.title)
+                                                : ""
+                                            color: root.mutedColor
+                                            font.pixelSize: 10
+                                            elide: Text.ElideRight
+                                            visible: text.length > 0
+                                        }
                                     }
                                 }
 
@@ -1173,8 +1828,21 @@ ShellRoot {
                                         ? Qt.ClosedHandCursor
                                         : Qt.PointingHandCursor
 
+                                    onEntered: {
+                                        bubbleDelegate.tooltipReady = false
+                                        tooltipTimer.restart()
+                                    }
+
+                                    onExited: {
+                                        tooltipTimer.stop()
+                                        bubbleDelegate.tooltipReady = false
+                                    }
+
                                     onPressed:
                                         function(mouse) {
+                                            tooltipTimer.stop()
+                                            bubbleDelegate.tooltipReady = false
+
                                             const point =
                                                 bubbleMouse.mapToItem(
                                                     root,
@@ -1225,6 +1893,8 @@ ShellRoot {
                                         }
 
                                     onCanceled: {
+                                        tooltipTimer.stop()
+                                        bubbleDelegate.tooltipReady = false
                                         root.cancelPointerInteraction()
                                     }
                                 }
@@ -1245,7 +1915,7 @@ ShellRoot {
                     dragProxy
 
                 visible:
-                    root.dragActive
+                    (root.dragActive || root.dropFeedbackActive)
                     && root.draggedClient !== null
 
                 z: 1000
@@ -1272,7 +1942,29 @@ ShellRoot {
                 border.color:
                     root.accentColor
 
-                opacity: 0.92
+                opacity:
+                    root.dropFeedbackActive
+                    ? 0.0
+                    : 0.92
+
+                scale:
+                    root.dropFeedbackActive
+                    ? 0.82
+                    : 1.0
+
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: 150
+                        easing.type: Easing.OutQuad
+                    }
+                }
+
+                Behavior on scale {
+                    NumberAnimation {
+                        duration: 150
+                        easing.type: Easing.OutQuad
+                    }
+                }
 
                 Column {
                     anchors.centerIn:
@@ -1283,24 +1975,50 @@ ShellRoot {
 
                     spacing: 2
 
-                    Text {
+                    Item {
                         anchors.horizontalCenter:
                             parent.horizontalCenter
 
-                        text:
+                        width: 36
+                        height: 36
+
+                        property var desktopEntryDependency:
+                            root.desktopApplications
+
+                        property string iconPath:
                             root.draggedClient
-                            ? root.shortClassName(
-                                root.draggedClient
-                            )
-                            .charAt(0)
-                            .toUpperCase()
+                            ? root.appIconPathFor(root.draggedClient)
                             : ""
 
-                        color:
-                            root.accentColor
+                        Image {
+                            anchors.fill: parent
+                            source: parent.iconPath
+                            visible: source.toString().length > 0
+                            fillMode: Image.PreserveAspectFit
+                            smooth: true
+                            mipmap: true
+                        }
 
-                        font.pixelSize: 22
-                        font.bold: true
+                        Text {
+                            anchors.centerIn: parent
+
+                            visible: parent.iconPath.length === 0
+
+                            text:
+                                root.draggedClient
+                                ? root.shortClassName(
+                                    root.draggedClient
+                                )
+                                .charAt(0)
+                                .toUpperCase()
+                                : ""
+
+                            color:
+                                root.accentColor
+
+                            font.pixelSize: 22
+                            font.bold: true
+                        }
                     }
 
                     Text {
@@ -1318,7 +2036,7 @@ ShellRoot {
 
                         text:
                             root.draggedClient
-                            ? root.shortClassName(
+                            ? root.appDisplayNameFor(
                                 root.draggedClient
                             )
                             : ""
