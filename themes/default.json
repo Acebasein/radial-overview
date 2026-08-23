@@ -1,0 +1,12 @@
+{
+  "background": "#111018",
+  "surface": "#1a1822",
+  "surfaceHover": "#24202f",
+  "foreground": "#ffffff",
+  "muted": "#8f8a9d",
+  "accent": "#8b5cf6",
+  "accentSecondary": "#c084fc",
+  "border": "#6d5a8f",
+  "dropHighlight": "#362454"
+}
+
