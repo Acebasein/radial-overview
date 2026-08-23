@@ -210,6 +210,20 @@ ShellRoot {
                 return shortClassName(client)
             }
 
+            function isFocusedClient(client) {
+                if (!client)
+                    return false
+
+                /*
+                 * hyprctl clients -j exposes focusHistoryID.
+                 * The currently focused normal Hyprland client is
+                 * represented by focusHistoryID === 0. The Overview
+                 * itself is a layer surface, so opening it does not
+                 * replace that client in the Hyprland client list.
+                 */
+                return client.focusHistoryID === 0
+            }
+
             function refreshClients() {
                 clientsProcess.running = false
                 clientsProcess.running = true
@@ -1110,6 +1124,9 @@ ShellRoot {
                             property string appDisplayName:
                                 root.appDisplayNameFor(client)
 
+                            property bool focused:
+                                root.isFocusedClient(client)
+
                             property real diameter:
                                 outerWorkspace.diameter
 
@@ -1140,6 +1157,39 @@ ShellRoot {
                                 - height / 2
 
                             Rectangle {
+                                id: focusHalo
+
+                                visible:
+                                    bubbleDelegate.focused
+                                    && !(
+                                        root.dragActive
+                                        && root.draggedClient
+                                        && root.draggedClient.address
+                                        === bubbleDelegate.client.address
+                                    )
+
+                                z: -1
+
+                                x: -5
+                                y: -5
+                                width: parent.width + 10
+                                height: parent.height + 10
+
+                                radius: width / 2
+                                color: "transparent"
+
+                                border.width: 2
+                                border.color: root.accentColor
+                                opacity: 0.55
+
+                                Behavior on opacity {
+                                    NumberAnimation {
+                                        duration: 120
+                                    }
+                                }
+                            }
+
+                            Rectangle {
                                 id: bubble
 
                                 anchors.fill:
@@ -1149,12 +1199,18 @@ ShellRoot {
                                     width / 2
 
                                 color:
-                                    bubbleMouse.containsMouse
+                                    (
+                                        bubbleMouse.containsMouse
+                                        || bubbleDelegate.focused
+                                    )
                                     ? theme.surfaceHover
                                     : root.bubbleBackground
 
                                 border.width:
-                                    bubbleMouse.containsMouse
+                                    (
+                                        bubbleMouse.containsMouse
+                                        || bubbleDelegate.focused
+                                    )
                                     ? 3
                                     : 2
 
@@ -1163,8 +1219,12 @@ ShellRoot {
 
                                 scale:
                                     bubbleMouse.containsMouse
-                                    ? 1.06
-                                    : 1.0
+                                    ? 1.07
+                                    : (
+                                        bubbleDelegate.focused
+                                        ? 1.035
+                                        : 1.0
+                                    )
 
                                 opacity:
                                     root.dragActive
@@ -1259,7 +1319,9 @@ ShellRoot {
                                             bubbleDelegate.appDisplayName
 
                                         color:
-                                            root.foregroundColor
+                                            bubbleDelegate.focused
+                                            ? root.accentColor
+                                            : root.foregroundColor
 
                                         font.pixelSize:
                                             Math.max(
@@ -1299,6 +1361,26 @@ ShellRoot {
 
                                         font.pixelSize: 9
                                     }
+                                }
+
+                                Rectangle {
+                                    visible: bubbleDelegate.focused
+
+                                    anchors.horizontalCenter:
+                                        parent.horizontalCenter
+
+                                    anchors.bottom:
+                                        parent.bottom
+
+                                    anchors.bottomMargin:
+                                        Math.max(5, parent.height * 0.07)
+
+                                    width:
+                                        Math.max(5, parent.width * 0.07)
+
+                                    height: width
+                                    radius: width / 2
+                                    color: root.accentColor
                                 }
 
                                 MouseArea {
