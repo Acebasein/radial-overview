@@ -441,6 +441,7 @@ ShellRoot {
              */
 
             property bool dragActive: false
+            property bool dropFeedbackActive: false
             property var draggedClient: null
 
             property real dragX: 0
@@ -456,6 +457,9 @@ ShellRoot {
                 radialCanvas.requestPaint()
 
             onDragActiveChanged:
+                radialCanvas.requestPaint()
+
+            onDropFeedbackActiveChanged:
                 radialCanvas.requestPaint()
 
             /*
@@ -580,17 +584,38 @@ ShellRoot {
                         )
 
                     if (target > 0) {
+                        /*
+                         * Move immediately, but keep a short-lived
+                         * visual proxy at the release point. This hides
+                         * the abrupt source/destination reflow while
+                         * Hyprland and the client model update.
+                         */
+                        dragX = px
+                        dragY = py
+                        dragTargetWorkspace = target
+
                         moveClientToWorkspace(
                             client,
                             target
                         )
+
+                        dragActive = false
+                        dropFeedbackActive = true
+                        dropFeedbackTimer.restart()
+
+                        radialCanvas.requestPaint()
+                        return
                     }
-                } else {
-                    focusClient(client)
+
+                    cancelPointerInteraction()
+                    return
                 }
+
+                focusClient(client)
 
                 draggedClient = null
                 dragActive = false
+                dropFeedbackActive = false
                 dragTargetWorkspace = 0
 
                 radialCanvas.requestPaint()
@@ -599,9 +624,23 @@ ShellRoot {
             function cancelPointerInteraction() {
                 draggedClient = null
                 dragActive = false
+                dropFeedbackActive = false
                 dragTargetWorkspace = 0
 
                 radialCanvas.requestPaint()
+            }
+
+            Timer {
+                id: dropFeedbackTimer
+                interval: 150
+                repeat: false
+
+                onTriggered: {
+                    root.dropFeedbackActive = false
+                    root.draggedClient = null
+                    root.dragTargetWorkspace = 0
+                    radialCanvas.requestPaint()
+                }
             }
 
             /*
@@ -905,7 +944,7 @@ ShellRoot {
                      * including both inner and outer rings.
                      */
 
-                    if (root.dragActive
+                    if ((root.dragActive || root.dropFeedbackActive)
                             && root.dragTargetWorkspace > 0) {
 
                         const targetIndex =
@@ -1067,7 +1106,7 @@ ShellRoot {
                         === workspaceId
 
                     property bool dropTarget:
-                        root.dragActive
+                        (root.dragActive || root.dropFeedbackActive)
                         && root.dragTargetWorkspace
                         === workspaceId
 
@@ -1334,7 +1373,7 @@ ShellRoot {
                                     )
 
                                 opacity:
-                                    root.dragActive
+                                    (root.dragActive || root.dropFeedbackActive)
                                     && root.draggedClient
                                     && root.draggedClient.address
                                     === bubbleDelegate.client.address
@@ -1579,7 +1618,7 @@ ShellRoot {
                     dragProxy
 
                 visible:
-                    root.dragActive
+                    (root.dragActive || root.dropFeedbackActive)
                     && root.draggedClient !== null
 
                 z: 1000
@@ -1606,7 +1645,29 @@ ShellRoot {
                 border.color:
                     root.accentColor
 
-                opacity: 0.92
+                opacity:
+                    root.dropFeedbackActive
+                    ? 0.0
+                    : 0.92
+
+                scale:
+                    root.dropFeedbackActive
+                    ? 0.82
+                    : 1.0
+
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: 150
+                        easing.type: Easing.OutQuad
+                    }
+                }
+
+                Behavior on scale {
+                    NumberAnimation {
+                        duration: 150
+                        easing.type: Easing.OutQuad
+                    }
+                }
 
                 Column {
                     anchors.centerIn:
