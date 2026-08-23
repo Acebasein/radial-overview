@@ -1435,6 +1435,8 @@ ShellRoot {
                             property bool focused:
                                 root.isFocusedClient(client)
 
+                            property bool tooltipReady: false
+
                             property real diameter:
                                 outerWorkspace.diameter
 
@@ -1463,6 +1465,23 @@ ShellRoot {
                                 + Math.sin(angle)
                                 * root.windowRingRadius
                                 - height / 2
+
+                            z:
+                                bubbleMouse.containsMouse
+                                ? 100
+                                : 0
+
+                            Timer {
+                                id: tooltipTimer
+                                interval: 400
+                                repeat: false
+
+                                onTriggered: {
+                                    if (bubbleMouse.containsMouse
+                                        && !root.dragActive)
+                                        bubbleDelegate.tooltipReady = true
+                                }
+                            }
 
                             Rectangle {
                                 id: focusHalo
@@ -1691,6 +1710,107 @@ ShellRoot {
                                     color: root.accentColor
                                 }
 
+                                Rectangle {
+                                    id: windowTooltip
+
+                                    visible:
+                                        bubbleDelegate.tooltipReady
+                                        && bubbleMouse.containsMouse
+                                        && !root.dragActive
+                                        && !root.dropFeedbackActive
+
+                                    z: 1000
+
+                                    width:
+                                        Math.min(
+                                            320,
+                                            Math.max(
+                                                180,
+                                                tooltipContent.implicitWidth + 24
+                                            )
+                                        )
+
+                                    height:
+                                        tooltipContent.implicitHeight + 18
+
+                                    x: {
+                                        const preferred =
+                                            (bubble.width - width) / 2
+
+                                        const minimum =
+                                            -bubbleDelegate.x + 12
+
+                                        const maximum =
+                                            root.width
+                                            - bubbleDelegate.x
+                                            - width
+                                            - 12
+
+                                        return Math.max(
+                                            minimum,
+                                            Math.min(preferred, maximum)
+                                        )
+                                    }
+
+                                    y:
+                                        bubbleDelegate.y
+                                        + bubble.height
+                                        + height
+                                        + 12
+                                        > root.height
+                                        ? -height - 10
+                                        : bubble.height + 10
+
+                                    radius: 8
+                                    color: root.bubbleBackground
+
+                                    border.width: 1
+                                    border.color: root.accentColor
+
+                                    opacity: visible ? 1.0 : 0.0
+
+                                    Behavior on opacity {
+                                        NumberAnimation {
+                                            duration: 90
+                                        }
+                                    }
+
+                                    Column {
+                                        id: tooltipContent
+
+                                        anchors {
+                                            left: parent.left
+                                            right: parent.right
+                                            verticalCenter: parent.verticalCenter
+                                            margins: 12
+                                        }
+
+                                        spacing: 3
+
+                                        Text {
+                                            width: parent.width
+                                            text: bubbleDelegate.appDisplayName
+                                            color: root.foregroundColor
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                        }
+
+                                        Text {
+                                            width: parent.width
+                                            text:
+                                                bubbleDelegate.client
+                                                && bubbleDelegate.client.title
+                                                ? String(bubbleDelegate.client.title)
+                                                : ""
+                                            color: root.mutedColor
+                                            font.pixelSize: 10
+                                            elide: Text.ElideRight
+                                            visible: text.length > 0
+                                        }
+                                    }
+                                }
+
                                 MouseArea {
                                     id:
                                         bubbleMouse
@@ -1708,8 +1828,21 @@ ShellRoot {
                                         ? Qt.ClosedHandCursor
                                         : Qt.PointingHandCursor
 
+                                    onEntered: {
+                                        bubbleDelegate.tooltipReady = false
+                                        tooltipTimer.restart()
+                                    }
+
+                                    onExited: {
+                                        tooltipTimer.stop()
+                                        bubbleDelegate.tooltipReady = false
+                                    }
+
                                     onPressed:
                                         function(mouse) {
+                                            tooltipTimer.stop()
+                                            bubbleDelegate.tooltipReady = false
+
                                             const point =
                                                 bubbleMouse.mapToItem(
                                                     root,
@@ -1760,6 +1893,8 @@ ShellRoot {
                                         }
 
                                     onCanceled: {
+                                        tooltipTimer.stop()
+                                        bubbleDelegate.tooltipReady = false
                                         root.cancelPointerInteraction()
                                     }
                                 }
