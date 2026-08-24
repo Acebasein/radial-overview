@@ -104,6 +104,16 @@ ShellRoot {
                     cancelPointerInteraction()
 
                 pendingFocusClient = clientToFocus || null
+
+                settingsRejectTimer.stop()
+                workspaceWarningTimer.stop()
+                settingsRejecting = false
+                workspaceWarningActive = false
+                workspaceWarningIds = []
+                workspaceWarningRequestedCount = 0
+                settingsPreviewCount = workspaceCount
+                settingsOpen = false
+
                 closing = true
                 presentationProgress = 0.0
                 closeAnimationTimer.restart()
@@ -150,6 +160,347 @@ ShellRoot {
              */
 
             property int workspaceCount: 8
+
+            /*
+             * --------------------------------------------------
+             * WORKSPACE SETTINGS DIAL
+             * --------------------------------------------------
+             *
+             * The selector mirrors the radial visual language: a
+             * compact clock-like dial with five detents (6–10).
+             * Eight points straight up and remains the default.
+             *
+             * workspaceCount is the committed/persisted value.
+             * settingsPreviewCount is the hand's temporary value.
+             *
+             * Safe increases may preview immediately in the main
+             * radial. Reductions keep the current radial visible
+             * until validation succeeds, so occupied workspaces can
+             * never disappear during a failed settings attempt.
+             */
+            property bool settingsOpen: false
+            property bool settingsRejecting: false
+            property int settingsPreviewCount: workspaceCount
+            readonly property int minimumWorkspaceCount: 6
+            readonly property int maximumWorkspaceCount: 10
+
+            /*
+             * Preference is stored outside the Git checkout under
+             * $XDG_STATE_HOME/radial-overview/settings.json (or the
+             * conventional ~/.local/state fallback).
+             */
+
+            /*
+             * Main-ring render count. Only safe increases preview
+             * before confirmation. A requested reduction leaves the
+             * committed workspace ring untouched until accepted.
+             */
+            readonly property int displayedWorkspaceCount:
+                settingsOpen
+                && settingsPreviewCount >= workspaceCount
+                ? settingsPreviewCount
+                : workspaceCount
+
+            /* Failed-reduction snack/highlight state. */
+            property bool workspaceWarningActive: false
+            property var workspaceWarningIds: []
+            property int workspaceWarningRequestedCount: 0
+            property var pendingWarningIds: []
+            property int pendingWarningRequestedCount: 0
+
+            onWorkspaceCountChanged: {
+                if (!settingsOpen)
+                    settingsPreviewCount = workspaceCount
+
+                radialCanvas.requestPaint()
+            }
+
+            function settingsAngleForCount(count) {
+                // Five positions across the upper clock arc:
+                // 6=-150°, 7=-120°, 8=-90°, 9=-60°, 10=-30°.
+                return (-150 + ((count - 6) * 30)) * Math.PI / 180
+            }
+
+            function wrappedAngleDistance(a, b) {
+                let diff = Math.abs(a - b)
+
+                while (diff > Math.PI * 2)
+                    diff -= Math.PI * 2
+
+                return Math.min(diff, Math.PI * 2 - diff)
+            }
+
+            function nearestWorkspaceCountForPoint(px, py, cx, cy) {
+                const angle = Math.atan2(py - cy, px - cx)
+                let bestCount = workspaceCount
+                let bestDistance = 999
+
+                for (let count = minimumWorkspaceCount;
+                     count <= maximumWorkspaceCount;
+                     ++count) {
+                    const candidate = settingsAngleForCount(count)
+                    const distance = wrappedAngleDistance(angle, candidate)
+
+                    if (distance < bestDistance) {
+                        bestDistance = distance
+                        bestCount = count
+                    }
+                }
+
+                return bestCount
+            }
+
+            function previewWorkspaceCount(count) {
+                if (settingsRejecting)
+                    return
+
+                const clamped = Math.max(
+                    minimumWorkspaceCount,
+                    Math.min(maximumWorkspaceCount, count)
+                )
+
+                settingsPreviewCount = clamped
+                radialCanvas.requestPaint()
+            }
+
+            function occupiedWorkspaceIdsAbove(limit) {
+                const occupied = ({})
+
+                for (let i = 0; i < clients.length; ++i) {
+                    const client = clients[i]
+
+                    if (!client || !client.workspace)
+                        continue
+
+                    const id = Number(client.workspace.id)
+
+                    /* Ignore special/non-numeric Hyprland workspaces. */
+                    if (!Number.isFinite(id) || id <= limit || id <= 0)
+                        continue
+
+                    occupied[id] = true
+                }
+
+                return Object.keys(occupied)
+                    .map(function(value) { return Number(value) })
+                    .sort(function(a, b) { return a - b })
+            }
+
+            function formatWorkspaceList(ids) {
+                if (!ids || ids.length === 0)
+                    return ""
+
+                if (ids.length === 1)
+                    return String(ids[0])
+
+                if (ids.length === 2)
+                    return ids[0] + " & " + ids[1]
+
+                return ids.slice(0, ids.length - 1).join(", ")
+                    + " & " + ids[ids.length - 1]
+            }
+
+            function isWorkspaceWarning(workspaceId) {
+                if (!workspaceWarningActive)
+                    return false
+
+                return workspaceWarningIds.indexOf(workspaceId) !== -1
+            }
+
+            function dismissWorkspaceWarning() {
+                if (!workspaceWarningActive)
+                    return
+
+                workspaceWarningActive = false
+                workspaceWarningIds = []
+                workspaceWarningRequestedCount = 0
+                radialCanvas.requestPaint()
+            }
+
+            function persistWorkspaceCount() {
+                const payload = JSON.stringify({
+                    workspaceCount: workspaceCount
+                })
+
+                Quickshell.execDetached([
+                    "bash",
+                    "-lc",
+                    'dir="${XDG_STATE_HOME:-$HOME/.local/state}/radial-overview"; mkdir -p "$dir"; printf "%s\n" "$1" > "$dir/settings.json"',
+                    "--",
+                    payload
+                ])
+            }
+
+            function commitWorkspaceCount(count) {
+                const clamped = Math.max(
+                    minimumWorkspaceCount,
+                    Math.min(maximumWorkspaceCount, count)
+                )
+
+                workspaceCount = clamped
+                settingsPreviewCount = clamped
+                persistWorkspaceCount()
+                radialCanvas.requestPaint()
+            }
+
+            function beginRejectedWorkspaceReduction(requestedCount, blockers) {
+                if (settingsRejecting)
+                    return
+
+                settingsRejecting = true
+                pendingWarningRequestedCount = requestedCount
+                pendingWarningIds = blockers.slice(0)
+
+                /*
+                 * First tell the story visually: the hand travels
+                 * smoothly back to the currently committed value.
+                 * The explanation appears only after it gets there.
+                 */
+                settingsPreviewCount = workspaceCount
+                radialCanvas.requestPaint()
+                settingsRejectTimer.restart()
+            }
+
+            function applyWorkspaceSetting() {
+                if (settingsRejecting)
+                    return
+
+                const requested = settingsPreviewCount
+
+                if (requested === workspaceCount) {
+                    closeSettings()
+                    return
+                }
+
+                if (requested < workspaceCount) {
+                    const blockers = occupiedWorkspaceIdsAbove(requested)
+
+                    if (blockers.length > 0) {
+                        beginRejectedWorkspaceReduction(
+                            requested,
+                            blockers
+                        )
+                        return
+                    }
+                }
+
+                commitWorkspaceCount(requested)
+                closeSettings()
+            }
+
+            function openSettings() {
+                if (dragActive)
+                    cancelPointerInteraction()
+
+                workspaceWarningActive = false
+                workspaceWarningTimer.stop()
+                settingsRejecting = false
+                settingsPreviewCount = workspaceCount
+                settingsOpen = true
+            }
+
+            function closeSettings() {
+                if (settingsRejecting)
+                    return
+
+                settingsPreviewCount = workspaceCount
+                settingsOpen = false
+                radialCanvas.requestPaint()
+                forceActiveFocus()
+            }
+
+            /*
+             * Load the persisted preference once. Missing/invalid files
+             * simply retain the built-in default of 8.
+             */
+            Process {
+                id: workspaceSettingsLoadProcess
+                running: true
+
+                command: [
+                    "bash",
+                    "-lc",
+                    'file="${XDG_STATE_HOME:-$HOME/.local/state}/radial-overview/settings.json"; if [ -f "$file" ]; then cat "$file"; fi'
+                ]
+
+                stdout: StdioCollector {
+                    onStreamFinished: {
+                        const raw = this.text.trim()
+
+                        if (!raw)
+                            return
+
+                        try {
+                            const data = JSON.parse(raw)
+                            const value = Number(data.workspaceCount)
+
+                            if (!Number.isFinite(value))
+                                return
+
+                            const clamped = Math.max(
+                                root.minimumWorkspaceCount,
+                                Math.min(root.maximumWorkspaceCount, value)
+                            )
+
+                            root.workspaceCount = clamped
+                            root.settingsPreviewCount = clamped
+                            radialCanvas.requestPaint()
+
+                            console.log(
+                                "Radial Overview: workspace count loaded:",
+                                clamped
+                            )
+                        } catch (error) {
+                            console.log(
+                                "Radial Overview: invalid settings JSON:",
+                                error
+                            )
+                        }
+                    }
+                }
+            }
+
+            Timer {
+                id: settingsRejectTimer
+                interval: 380
+                repeat: false
+
+                onTriggered: {
+                    root.settingsOpen = false
+                    root.settingsRejecting = false
+
+                    root.workspaceWarningRequestedCount =
+                        root.pendingWarningRequestedCount
+
+                    root.workspaceWarningIds =
+                        root.pendingWarningIds.slice(0)
+
+                    root.pendingWarningRequestedCount = 0
+                    root.pendingWarningIds = []
+
+                    root.workspaceWarningActive = true
+                    root.workspaceWarningTimer.restart()
+                    radialCanvas.requestPaint()
+                    root.forceActiveFocus()
+                }
+            }
+
+            Timer {
+                id: workspaceWarningTimer
+                interval: 4600
+                repeat: false
+
+                /*
+                 * Bind the timer directly to the warning state.
+                 * This is more robust than relying only on restart(),
+                 * and guarantees every visible warning gets a timeout.
+                 */
+                running: root.workspaceWarningActive
+
+                onTriggered: {
+                    root.dismissWorkspaceWarning()
+                }
+            }
 
             property real centerX: width / 2
             property real centerY: height / 2
@@ -566,7 +917,7 @@ ShellRoot {
 
                 const step =
                     (Math.PI * 2)
-                    / workspaceCount
+                    / displayedWorkspaceCount
 
                 return Math.floor(
                     normalized / step
@@ -715,7 +1066,7 @@ ShellRoot {
 
                 const sectorAngle =
                     (Math.PI * 2)
-                    / workspaceCount
+                    / displayedWorkspaceCount
 
                 /*
                  * Arc available for this workspace at the center
@@ -775,7 +1126,7 @@ ShellRoot {
             ) {
                 const sectorStep =
                     (Math.PI * 2)
-                    / workspaceCount
+                    / displayedWorkspaceCount
 
                 const sectorStart =
                     -Math.PI / 2
@@ -1009,7 +1360,11 @@ ShellRoot {
              */
 
             Keys.onEscapePressed: {
-                if (root.dragActive) {
+                if (root.settingsOpen) {
+                    root.closeSettings()
+                } else if (root.workspaceWarningActive) {
+                    root.dismissWorkspaceWarning()
+                } else if (root.dragActive) {
                     root.cancelPointerInteraction()
                 } else {
                     root.requestClose()
@@ -1021,7 +1376,14 @@ ShellRoot {
                 context: Qt.WindowShortcut
 
                 onActivated: {
-                    if (root.dragActive) {
+                    if (root.settingsOpen) {
+                        root.closeSettings()
+                    } else if (root.workspaceWarningActive) {
+                        root.workspaceWarningActive = false
+                        root.workspaceWarningIds = []
+                        root.workspaceWarningRequestedCount = 0
+                        radialCanvas.requestPaint()
+                    } else if (root.dragActive) {
                         root.cancelPointerInteraction()
                     } else {
                         root.requestClose()
@@ -1061,7 +1423,7 @@ ShellRoot {
                         root.outerOuterRadius
 
                     const count =
-                        root.workspaceCount
+                        root.displayedWorkspaceCount
 
                     const step =
                         (Math.PI * 2)
@@ -1207,7 +1569,7 @@ ShellRoot {
 
             Repeater {
                 model:
-                    root.workspaceCount
+                    root.displayedWorkspaceCount
 
                 Item {
                     id:
@@ -1238,6 +1600,9 @@ ShellRoot {
                         && root.dragTargetWorkspace
                         === workspaceId
 
+                    property bool warningTarget:
+                        root.isWorkspaceWarning(workspaceId)
+
                     property string monitorName:
                         root.workspaceMonitorName(
                             workspaceId
@@ -1250,7 +1615,7 @@ ShellRoot {
 
                     property real step:
                         (Math.PI * 2)
-                        / root.workspaceCount
+                        / root.displayedWorkspaceCount
 
                     property real angle:
                         -Math.PI / 2
@@ -1294,18 +1659,26 @@ ShellRoot {
                                 workspaceDelegate.workspaceId
 
                             color:
-                                workspaceDelegate.dropTarget
-                                ? root.foregroundColor
+                                workspaceDelegate.warningTarget
+                                ? root.accentSecondaryColor
                                 : (
-                                    workspaceDelegate.active
-                                    ? root.accentColor
-                                    : root.foregroundColor
+                                    workspaceDelegate.dropTarget
+                                    ? root.foregroundColor
+                                    : (
+                                        workspaceDelegate.active
+                                        ? root.accentColor
+                                        : root.foregroundColor
+                                    )
                                 )
 
                             font.pixelSize:
-                                workspaceDelegate.dropTarget
+                                workspaceDelegate.warningTarget
                                 ? 32
-                                : 28
+                                : (
+                                    workspaceDelegate.dropTarget
+                                    ? 32
+                                    : 28
+                                )
 
                             font.bold: true
                         }
@@ -1326,12 +1699,16 @@ ShellRoot {
                                 )
 
                             color:
-                                workspaceDelegate.dropTarget
-                                ? root.accentColor
+                                workspaceDelegate.warningTarget
+                                ? root.accentSecondaryColor
                                 : (
-                                    workspaceDelegate.active
+                                    workspaceDelegate.dropTarget
                                     ? root.accentColor
-                                    : root.mutedColor
+                                    : (
+                                        workspaceDelegate.active
+                                        ? root.accentColor
+                                        : root.mutedColor
+                                    )
                                 )
 
                             font.pixelSize: 12
@@ -1372,7 +1749,7 @@ ShellRoot {
 
             Repeater {
                 model:
-                    root.workspaceCount
+                    root.displayedWorkspaceCount
 
                 Item {
                     id:
@@ -2051,94 +2428,622 @@ ShellRoot {
 
             /*
              * --------------------------------------------------
+             * WORKSPACE REDUCTION WARNING
+             * --------------------------------------------------
+             *
+             * Non-modal on purpose: the user needs the Overview
+             * immediately so they can move the blocking windows.
+             */
+            MouseArea {
+                id: workspaceWarningDismissArea
+
+                anchors.fill: parent
+                z: 949
+                enabled: root.workspaceWarningActive
+                visible: enabled
+                hoverEnabled: false
+
+                onClicked: {
+                    root.dismissWorkspaceWarning()
+                }
+            }
+
+            Rectangle {
+                id: workspaceWarningCard
+
+                z: 950
+                width: Math.min(410, root.width * 0.38)
+                height: 112
+                radius: 20
+
+                x: root.centerX - width / 2
+                y: root.centerY + root.hubRadius + 18
+
+                color: root.bubbleBackground
+                border.width: 1
+                border.color: root.accentSecondaryColor
+
+                opacity:
+                    root.workspaceWarningActive
+                    ? 1.0
+                    : 0.0
+
+                scale:
+                    root.workspaceWarningActive
+                    ? 1.0
+                    : 0.94
+
+                visible: opacity > 0.01
+
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: 170
+                        easing.type: Easing.OutCubic
+                    }
+                }
+
+                Behavior on scale {
+                    NumberAnimation {
+                        duration: 190
+                        easing.type: Easing.OutBack
+                    }
+                }
+
+                Column {
+                    anchors.fill: parent
+                    anchors.margins: 16
+                    spacing: 5
+
+                    Text {
+                        width: parent.width
+                        text: "Whoa, not so fast! 😄"
+                        color: root.foregroundColor
+                        font.pixelSize: 16
+                        font.bold: true
+                    }
+
+                    Text {
+                        width: parent.width
+                        text: {
+                            const ids = root.workspaceWarningIds
+                            const names = root.formatWorkspaceList(ids)
+
+                            if (ids.length === 1)
+                                return "Workspace " + names + " still has company."
+
+                            return "Workspaces " + names + " still have company."
+                        }
+                        color: root.accentSecondaryColor
+                        font.pixelSize: 13
+                        font.bold: true
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        width: parent.width
+                        text:
+                            "Move those windows to 1–"
+                            + root.workspaceWarningRequestedCount
+                            + " first."
+
+                        color: root.mutedColor
+                        font.pixelSize: 12
+                    }
+                }
+            }
+
+            /*
+             * --------------------------------------------------
              * CENTER HUB
              * --------------------------------------------------
              */
 
-            Column {
-                anchors.centerIn:
-                    parent
+            Item {
+                id: centerHub
 
-                spacing: 6
+                anchors.centerIn: parent
 
-                Text {
-                    anchors.horizontalCenter:
-                        parent.horizontalCenter
+                width:
+                    Math.max(
+                        220,
+                        root.hubRadius * 1.9
+                    )
 
-                    text:
-                        root.dragActive
-                        ? "Move Window"
-                        : "Overview"
+                height: width
+                z: 700
 
-                    color:
-                        root.foregroundColor
+                /*
+                 * Normal overview information. The settings button
+                 * lives here rather than at a screen edge so the
+                 * control remains part of the radial language.
+                 */
+                Column {
+                    id: normalHubContent
 
-                    font.pixelSize: 30
-                    font.bold: true
-                }
+                    anchors.centerIn: parent
+                    spacing: 6
 
-                Text {
-                    anchors.horizontalCenter:
-                        parent.horizontalCenter
+                    visible: !root.settingsOpen
+                    opacity: visible ? 1.0 : 0.0
 
-                    text:
-                        root.dragActive
-                        ? (
-                            root.dragTargetWorkspace > 0
-                            ? "Workspace "
-                              + root.dragTargetWorkspace
-                            : "Drag onto a workspace"
-                        )
-                        : (
-                            Hyprland.focusedWorkspace
-                            !== null
-                            ? "Workspace "
-                              + Hyprland.focusedWorkspace.id
-                            : "No active workspace"
-                        )
+                    Behavior on opacity {
+                        NumberAnimation { duration: 100 }
+                    }
 
-                    color:
-                        root.accentColor
+                    Text {
+                        anchors.horizontalCenter:
+                            parent.horizontalCenter
 
-                    font.pixelSize: 16
-                }
+                        text:
+                            root.dragActive
+                            ? "Move Window"
+                            : "Overview"
 
-                Text {
-                    anchors.horizontalCenter:
-                        parent.horizontalCenter
+                        color:
+                            root.foregroundColor
 
-                    text:
-                        root.dragActive
-                        ? "Release to move"
-                        : (
-                            root.clients.length
-                            + (
-                                root.clients.length
-                                === 1
-                                ? " active window"
-                                : " active windows"
+                        font.pixelSize: 30
+                        font.bold: true
+                    }
+
+                    Text {
+                        anchors.horizontalCenter:
+                            parent.horizontalCenter
+
+                        text:
+                            root.dragActive
+                            ? (
+                                root.dragTargetWorkspace > 0
+                                ? "Workspace "
+                                  + root.dragTargetWorkspace
+                                : "Drag onto a workspace"
                             )
-                        )
+                            : (
+                                Hyprland.focusedWorkspace
+                                !== null
+                                ? "Workspace "
+                                  + Hyprland.focusedWorkspace.id
+                                : "No active workspace"
+                            )
 
-                    color:
-                        root.mutedColor
+                        color:
+                            root.accentColor
 
-                    font.pixelSize: 13
+                        font.pixelSize: 16
+                    }
+
+                    Text {
+                        anchors.horizontalCenter:
+                            parent.horizontalCenter
+
+                        text:
+                            root.dragActive
+                            ? "Release to move"
+                            : (
+                                root.clients.length
+                                + (
+                                    root.clients.length
+                                    === 1
+                                    ? " active window"
+                                    : " active windows"
+                                )
+                            )
+
+                        color:
+                            root.mutedColor
+
+                        font.pixelSize: 13
+                    }
+
+                    Text {
+                        anchors.horizontalCenter:
+                            parent.horizontalCenter
+
+                        text:
+                            root.dragActive
+                            ? "Esc cancels drag"
+                            : "Esc to close"
+
+                        color:
+                            root.mutedColor
+
+                        font.pixelSize: 13
+                    }
+
+                    Rectangle {
+                        id: settingsButton
+
+                        anchors.horizontalCenter:
+                            parent.horizontalCenter
+
+                        visible: !root.dragActive
+
+                        width: 34
+                        height: 34
+                        radius: width / 2
+
+                        color:
+                            settingsButtonMouse.containsMouse
+                            ? theme.surfaceHover
+                            : root.bubbleBackground
+
+                        border.width: 1
+                        border.color:
+                            settingsButtonMouse.containsMouse
+                            ? root.accentColor
+                            : root.mutedColor
+
+                        scale:
+                            settingsButtonMouse.containsMouse
+                            ? 1.08
+                            : 1.0
+
+                        Behavior on scale {
+                            NumberAnimation { duration: 90 }
+                        }
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "⚙"
+                            color: root.foregroundColor
+                            font.pixelSize: 17
+                        }
+
+                        MouseArea {
+                            id: settingsButtonMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+
+                            onClicked: {
+                                root.openSettings()
+                            }
+                        }
+                    }
                 }
 
-                Text {
-                    anchors.horizontalCenter:
-                        parent.horizontalCenter
+                /*
+                 * Circular workspace-count selector. Eight is the
+                 * center/default detent and points straight up.
+                 *
+                 * Click any number, or drag anywhere on the clock
+                 * face, to move the single hand to the nearest
+                 * detent. The main radial previews the sector count
+                 * immediately.
+                 */
+                Item {
+                    id: workspaceSettingsDial
 
-                    text:
-                        root.dragActive
-                        ? "Esc cancels drag"
-                        : "Esc to close"
+                    anchors.centerIn: parent
 
-                    color:
-                        root.mutedColor
+                    width:
+                        Math.min(
+                            centerHub.width,
+                            root.hubRadius * 1.82
+                        )
 
-                    font.pixelSize: 13
+                    height: width
+
+                    visible: root.settingsOpen
+                    opacity: visible ? 1.0 : 0.0
+                    scale: visible ? 1.0 : 0.94
+
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: 120
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+
+                    Behavior on scale {
+                        NumberAnimation {
+                            duration: 140
+                            easing.type: Easing.OutBack
+                        }
+                    }
+
+                    property real dialRadius: width / 2
+                    property real tickRadius: dialRadius * 0.76
+                    property real handLength: dialRadius * 0.54
+
+                    Rectangle {
+                        anchors.fill: parent
+                        radius: width / 2
+
+                        color: root.bubbleBackground
+
+                        border.width: 2
+                        border.color: root.accentColor
+
+                        opacity: 0.97
+                    }
+
+                    Rectangle {
+                        anchors.centerIn: parent
+
+                        width: parent.width - 16
+                        height: width
+                        radius: width / 2
+                        color: "transparent"
+                        border.width: 1
+                        border.color: root.mutedColor
+                        opacity: 0.35
+                    }
+
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.top: parent.top
+                        anchors.topMargin: 16
+
+                        text: "WORKSPACES"
+                        color: root.mutedColor
+                        font.pixelSize: 9
+                        font.bold: true
+                        font.letterSpacing: 1.3
+                    }
+
+                    /* Clock ticks + directly clickable numbers. */
+                    Repeater {
+                        model: 5
+
+                        Item {
+                            id: workspaceChoice
+
+                            required property int index
+                            z: 6
+
+                            property int choice: index + 6
+                            property real choiceAngle:
+                                root.settingsAngleForCount(choice)
+
+                            width: 38
+                            height: 38
+
+                            x:
+                                workspaceSettingsDial.width / 2
+                                + Math.cos(choiceAngle)
+                                * workspaceSettingsDial.tickRadius
+                                - width / 2
+
+                            y:
+                                workspaceSettingsDial.height / 2
+                                + Math.sin(choiceAngle)
+                                * workspaceSettingsDial.tickRadius
+                                - height / 2
+
+                            Rectangle {
+                                anchors.centerIn: parent
+
+                                width:
+                                    workspaceChoice.choice
+                                    === root.settingsPreviewCount
+                                    ? 34
+                                    : 28
+
+                                height: width
+                                radius: width / 2
+
+                                color:
+                                    workspaceChoice.choice
+                                    === root.settingsPreviewCount
+                                    ? root.accentColor
+                                    : (
+                                        choiceMouse.containsMouse
+                                        ? theme.surfaceHover
+                                        : "transparent"
+                                    )
+
+                                border.width:
+                                    workspaceChoice.choice
+                                    === root.settingsPreviewCount
+                                    ? 0
+                                    : 1
+
+                                border.color: root.mutedColor
+
+                                Behavior on width {
+                                    NumberAnimation { duration: 100 }
+                                }
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: workspaceChoice.choice
+
+                                    color:
+                                        workspaceChoice.choice
+                                        === root.settingsPreviewCount
+                                        ? theme.background
+                                        : root.foregroundColor
+
+                                    font.pixelSize:
+                                        workspaceChoice.choice
+                                        === root.settingsPreviewCount
+                                        ? 14
+                                        : 12
+
+                                    font.bold: true
+                                }
+                            }
+
+                            MouseArea {
+                                id: choiceMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+
+                                onClicked: {
+                                    if (root.settingsRejecting)
+                                        return
+
+                                    root.previewWorkspaceCount(
+                                        workspaceChoice.choice
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    /* Single clock hand. */
+                    Rectangle {
+                        id: workspaceHand
+
+                        z: 3
+
+                        x: workspaceSettingsDial.width / 2
+                        y: workspaceSettingsDial.height / 2 - height / 2
+
+                        width: workspaceSettingsDial.handLength
+                        height: 3
+                        radius: height / 2
+
+                        color: root.accentSecondaryColor
+
+                        transformOrigin: Item.Left
+                        rotation:
+                            -150
+                            + ((root.settingsPreviewCount - 6) * 30)
+
+                        Behavior on rotation {
+                            NumberAnimation {
+                                duration:
+                                    root.settingsRejecting
+                                    ? 360
+                                    : 130
+
+                                easing.type: Easing.OutCubic
+                            }
+                        }
+
+                        Rectangle {
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 7
+                            height: 7
+                            radius: width / 2
+                            color: root.accentSecondaryColor
+                        }
+                    }
+
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 17
+                        height: 17
+                        radius: width / 2
+                        color: root.accentColor
+                        border.width: 3
+                        border.color: root.bubbleBackground
+                        z: 5
+                    }
+
+                    /*
+                     * A generous pointer surface makes the hand easy
+                     * to use without requiring pixel-perfect dragging.
+                     */
+                    MouseArea {
+                        id: dialDragArea
+
+                        anchors.fill: parent
+                        z: 2
+
+                        acceptedButtons: Qt.LeftButton
+                        cursorShape:
+                            pressed
+                            ? Qt.ClosedHandCursor
+                            : Qt.OpenHandCursor
+
+                        function updateSelection(mouse) {
+                            const count =
+                                root.nearestWorkspaceCountForPoint(
+                                    mouse.x,
+                                    mouse.y,
+                                    width / 2,
+                                    height / 2
+                                )
+
+                            root.previewWorkspaceCount(count)
+                        }
+
+                        onPressed: function(mouse) {
+                            if (!root.settingsRejecting)
+                                updateSelection(mouse)
+                        }
+
+                        onPositionChanged: function(mouse) {
+                            if (pressed && !root.settingsRejecting)
+                                updateSelection(mouse)
+                        }
+                    }
+
+                    /* Selected value / confirmation. */
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.verticalCenterOffset: 31
+
+                        text: root.settingsPreviewCount
+                        color: root.foregroundColor
+                        font.pixelSize: 25
+                        font.bold: true
+                        z: 6
+                    }
+
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.verticalCenterOffset: 53
+
+                        text:
+                            root.settingsPreviewCount < root.workspaceCount
+                            ? "validate on ✓"
+                            : "workspace preview"
+                        color: root.mutedColor
+                        font.pixelSize: 9
+                        z: 6
+                    }
+
+                    Rectangle {
+                        id: settingsDoneButton
+
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: 11
+
+                        width: 30
+                        height: 30
+                        radius: width / 2
+
+                        z: 8
+
+                        color:
+                            settingsDoneMouse.containsMouse
+                            ? root.accentColor
+                            : root.bubbleBackground
+
+                        border.width: 1
+                        border.color: root.accentColor
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "✓"
+                            color:
+                                settingsDoneMouse.containsMouse
+                                ? theme.background
+                                : root.foregroundColor
+                            font.pixelSize: 15
+                            font.bold: true
+                        }
+
+                        MouseArea {
+                            id: settingsDoneMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+
+                            onClicked: {
+                                root.applyWorkspaceSetting()
+                            }
+                        }
+                    }
                 }
             }
         }
