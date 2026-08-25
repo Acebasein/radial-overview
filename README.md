@@ -10,9 +10,9 @@ window navigation and workspace management simple.
 
 ## Demo
 
-See Radial Overview in action — workspace navigation, window focus,
-drag-and-drop, window-title tooltips, multi-monitor awareness, and live
-Omarchy theme integration.
+See Radial Overview in action — individual window drag-and-drop, whole-workspace
+delivery, workspace-count settings and safety validation, selectable Kite/Pizza/
+Balloons animations, multi-monitor awareness, and live Omarchy theme integration.
 
 https://github.com/user-attachments/assets/5b701a39-057f-44fc-a34b-90fad811e74c
 
@@ -25,18 +25,29 @@ https://github.com/user-attachments/assets/5b701a39-057f-44fc-a34b-90fad811e74c
 - Application-name fallback when an icon cannot be resolved
 - Focused-window highlighting
 - Click a window to focus it
-- Drag and drop windows between workspaces
-- Smooth drag release transition
+- Drag and drop individual windows between workspaces
+- Drag an occupied workspace to move all of its windows together
+- Whole-workspace move confirmation before applying the change
+- Persistent arrival highlighting for newly moved windows
 - Inner and outer workspace sectors act as drop targets
+- Interactive workspace-count settings dial
+- Increase or reduce the configured workspace count
+- Safe workspace reduction: changes are blocked when a workspace being removed still contains windows
+- Selectable whole-workspace delivery animations:
+  - Kite (default)
+  - Pizza
+  - Balloons
+- Animation choice and workspace count persist across restarts
+- Theme-derived animation palettes
+- Automatic Omarchy theme integration with live palette updates
+- Desktop/rice-independent semantic theme contract
 - Compatible with Hyprland scrolling layouts
 - Multi-monitor workspace indicators
 - Topology-aware multi-monitor hot corners
-- Live semantic theme loading
-- Automatic Omarchy theme integration
-- Desktop/rice-independent theme contract
 - IPC open, close, and toggle controls
 - Subtle overview transitions
 - Escape key closes the overview
+- Optional Hyprland keybind integration through IPC
 - Optional systemd user-service integration
 
 ## Requirements
@@ -306,6 +317,54 @@ than manually starting Quickshell processes.
 
 ---
 
+
+# Workspace Management and Delivery
+
+## Individual Window Movement
+
+Drag a window bubble and drop it onto another workspace sector to move that
+window through Hyprland. Newly moved windows receive a persistent visual
+distinction in the destination workspace so the arrival remains easy to find.
+
+## Move an Entire Workspace
+
+An occupied workspace number can also be dragged onto another workspace.
+Radial Overview captures the windows in the source workspace, presents the
+selected delivery animation during the drag, and asks for confirmation before
+moving the group.
+
+Empty workspaces do not expose the whole-workspace drag affordance.
+
+## Workspace Settings
+
+The settings dial controls the number of workspaces presented by Radial
+Overview.
+
+The workspace count can be increased or reduced. Reduction is deliberately
+guarded: if a workspace that would be removed still contains windows, the
+change is rejected until those windows are moved into the remaining workspace
+range.
+
+For example, reducing the configured count to 6 is blocked while workspace 10
+still contains a window.
+
+## Delivery Animations
+
+Whole-workspace movement supports three selectable presentation styles:
+
+```text
+Kite       → default
+Pizza      → playful workspace delivery
+Balloons   → workspace balloon with app balloons
+```
+
+The selected animation is presentation-only; all three use the same underlying
+workspace-movement behavior.
+
+The animation choice is saved with the workspace settings and is restored when
+Radial Overview starts again.
+
+
 # Multi-Monitor Support
 
 Radial Overview reads Hyprland's workspace and monitor topology.
@@ -387,6 +446,11 @@ The Omarchy adapter maps those colors into the Radial Overview semantic theme.
 
 If an Omarchy theme is changed while Radial Overview is running, the adapter
 detects the change and updates the active palette.
+
+The workspace-delivery renderers derive lighter, darker, and app-distinct
+variants from that active semantic palette. Kite, Pizza, Balloons, destination
+indicators, and app markers therefore remain visually related to the current
+Omarchy theme without relying on a fixed animation color scheme.
 
 If the Omarchy theme is unavailable, Radial Overview automatically falls back
 to:
@@ -509,31 +573,34 @@ whether the default theme was selected.
 
 # Development Status
 
-Radial Overview currently includes:
+The current release candidate includes:
 
 - Functional radial workspace navigation
-- Adaptive window bubbles
-- Native application icons
-- Focused-window indication
-- Drag-and-drop workspace movement
-- Drag-release visual smoothing
+- Adaptive window bubbles and native application icons
+- Focused-window indication and window-title tooltips
+- Individual window drag-and-drop between workspaces
+- Whole-workspace drag-and-drop with confirmation
+- Persistent arrival highlighting
+- Interactive workspace-count settings
+- Safe reduction validation for occupied higher-numbered workspaces
+- Kite, Pizza, and Balloons delivery animations
+- Persistent workspace-count and animation settings
 - Multi-monitor workspace awareness
 - Topology-aware hot corners
 - Live Omarchy theme integration
+- Theme-derived animation palettes
 - Portable semantic theme architecture
 - systemd user-service integration
 
-The project is currently undergoing production validation before its next
-release.
+The feature set is frozen for the upcoming release and has completed functional
+release-candidate validation.
 
 ## Planned
 
-- Window-title tooltips
+- Additional delivery animations
 - Additional theme adapters
 - Broader environment testing
 - Packaging and installation improvements
-
----
 
 # License
 
