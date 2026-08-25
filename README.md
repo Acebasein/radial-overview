@@ -14,7 +14,7 @@ See Radial Overview in action — individual window drag-and-drop, whole-workspa
 delivery, workspace-count settings and safety validation, selectable Kite/Pizza/
 Balloons animations, multi-monitor awareness, and live Omarchy theme integration.
 
-https://github.com/user-attachments/assets/5b701a39-057f-44fc-a34b-90fad811e74c
+https://github.com/user-attachments/assets/b7cb26de-2907-4373-984f-7f3d74cabbc0
 
 ## Features
 
