@@ -194,8 +194,9 @@ ShellRoot {
             property string activeDeliveryAnimation: workspaceMoveAnimation
 
             readonly property var workspaceAnimationChoices: [
-                { key: "kite",  label: "KITE",  icon: "🪁" },
-                { key: "pizza", label: "PIZZA", icon: "🍕" }
+                { key: "kite",     label: "KITE",     icon: "🪁" },
+                { key: "pizza",    label: "PIZZA",    icon: "🍕" },
+                { key: "balloons", label: "BALLOONS", icon: "🎈" }
             ]
 
             readonly property int minimumWorkspaceCount: 6
@@ -553,11 +554,6 @@ ShellRoot {
                             root.activeDeliveryAnimation = animation
                             radialCanvas.requestPaint()
 
-                            console.log(
-                                "Radial Overview: settings loaded:",
-                                clamped,
-                                animation
-                            )
                         } catch (error) {
                             console.log(
                                 "Radial Overview: invalid settings JSON:",
@@ -1095,6 +1091,118 @@ ShellRoot {
                     derivedPaletteIsDark ? 0.42 : 0.31,
                     derivedPaletteIsDark ? 0.34 : 0.25
                 )
+
+
+            /*
+             * --------------------------------------------------
+             * BALLOONS — THEME-NATIVE DEPTH PALETTE
+             * --------------------------------------------------
+             *
+             * Simple rule:
+             *   - take the active theme's own semantic colors
+             *   - darken them with Qt.darker()
+             *   - use Qt.lighter() only for outlines/highlights
+             *
+             * No separate rainbow palette is invented.
+             */
+
+            readonly property real balloonDarkFactor:
+                derivedPaletteIsDark ? 1.62 : 1.78
+
+            readonly property real balloonDeepFactor:
+                derivedPaletteIsDark ? 1.92 : 2.10
+
+            readonly property real balloonLightFactor:
+                derivedPaletteIsDark ? 1.30 : 1.16
+
+            readonly property color balloonAccentDark:
+                Qt.darker(accentColor, balloonDarkFactor)
+
+            readonly property color balloonSecondaryDark:
+                Qt.darker(accentSecondaryColor, balloonDarkFactor)
+
+            readonly property color balloonMutedDark:
+                Qt.darker(mutedColor, balloonDarkFactor)
+
+            readonly property color balloonForegroundDark:
+                Qt.darker(foregroundColor, balloonDeepFactor)
+
+            readonly property color balloonDropDark:
+                Qt.darker(dropHighlightColor, balloonDarkFactor)
+
+            readonly property color balloonSurfaceDark:
+                Qt.darker(bubbleBackground, balloonDeepFactor)
+
+            readonly property color balloonHoverDark:
+                Qt.darker(theme.surfaceHover, balloonDarkFactor)
+
+            readonly property var balloonPalette: [
+                balloonAccentDark,
+                balloonSecondaryDark,
+                balloonMutedDark,
+                balloonForegroundDark,
+                balloonDropDark,
+                balloonHoverDark
+            ]
+
+            function balloonVariantIndex(appKey) {
+                const key = String(appKey || "app")
+                let hash = 5381
+
+                for (let i = 0; i < key.length; ++i) {
+                    hash = ((hash << 5) + hash) ^ key.charCodeAt(i)
+                    hash |= 0
+                }
+
+                return Math.abs(hash) % balloonPalette.length
+            }
+
+            function balloonVariantColor(appKey) {
+                return balloonPalette[balloonVariantIndex(appKey)]
+            }
+
+            function balloonVariantOutline(appKey) {
+                return Qt.lighter(
+                    balloonVariantColor(appKey),
+                    balloonLightFactor + 0.08
+                )
+            }
+
+            readonly property color balloonMainColor:
+                Qt.darker(
+                    accentColor,
+                    balloonDarkFactor + 0.18
+                )
+
+            readonly property color balloonMainPanelAlt:
+                Qt.darker(
+                    accentSecondaryColor,
+                    balloonDarkFactor + 0.10
+                )
+
+            readonly property color balloonMainHighlight:
+                Qt.lighter(accentColor, balloonLightFactor)
+
+            readonly property color balloonBasketBase:
+                Qt.darker(
+                    accentSecondaryColor,
+                    balloonDarkFactor + 0.22
+                )
+
+            readonly property color balloonBasketRim:
+                Qt.darker(
+                    accentColor,
+                    balloonDarkFactor - 0.10
+                )
+
+            readonly property color balloonBasketHighlight:
+                Qt.lighter(
+                    accentSecondaryColor,
+                    balloonLightFactor
+                )
+
+            readonly property color balloonLandingGlow:
+                Qt.darker(dropHighlightColor, balloonDarkFactor)
 
             /*
              * The adaptive derived palette above is intentionally
@@ -1689,14 +1797,14 @@ ShellRoot {
 
             /*
              * --------------------------------------------------
-             * WORKSPACE MOVE — KITE SLICE PROTOTYPE
+             * WORKSPACE MOVE — DELIVERY ANIMATION SYSTEM
              * --------------------------------------------------
              *
-             * Dragging an occupied workspace number lifts a ghost
-             * "kite" with app-aware badges attached to its trailing string. Valid
-             * destination sectors highlight and reach out with a
-             * small stylized receiving arm. Releasing opens a
-             * confirmation card.
+             * Dragging an occupied workspace number activates the
+             * selected delivery animation with app-aware markers.
+             * Valid destination sectors highlight with their
+             * animation-specific destination indicator. Releasing
+             * opens a confirmation card.
              *
              * Confirming Move captures the clients that currently
              * belong to the source workspace, asks Hyprland to move
@@ -1712,7 +1820,7 @@ ShellRoot {
             property int workspaceDragWindowCount: 0
 
             /*
-             * Visual "kite toppings" captured when a workspace drag starts.
+             * Visual "delivery app markers" captured when a workspace drag starts.
              *
              * Each real window contributes one topping. Windows belonging
              * to the same application naturally receive the same icon/name,
@@ -1997,6 +2105,60 @@ ShellRoot {
                     Math.round(t * (steps - 1)),
                     steps
                 )
+            }
+
+            function balloonPassengerPoint(index, count) {
+                /*
+                 * App balloons form a loose convoy below and around the main
+                 * workspace balloon. Their base positions are intentionally
+                 * asymmetric; live wind offsets are layered on top in QML.
+                 */
+                const layouts = {
+                    1: [ { x: 0, y: 166 } ],
+                    2: [
+                        { x: -34, y: 158 },
+                        { x: 34,  y: 178 }
+                    ],
+                    3: [
+                        { x: -45, y: 154 },
+                        { x: 34,  y: 166 },
+                        { x: -8,  y: 205 }
+                    ],
+                    4: [
+                        { x: -48, y: 150 },
+                        { x: 42,  y: 160 },
+                        { x: -25, y: 201 },
+                        { x: 37,  y: 218 }
+                    ],
+                    5: [
+                        { x: -52, y: 148 },
+                        { x: 44,  y: 157 },
+                        { x: -19, y: 191 },
+                        { x: 47,  y: 213 },
+                        { x: -40, y: 234 }
+                    ],
+                    6: [
+                        { x: -53, y: 144 },
+                        { x: 45,  y: 153 },
+                        { x: -17, y: 184 },
+                        { x: 50,  y: 204 },
+                        { x: -46, y: 225 },
+                        { x: 13,  y: 244 }
+                    ],
+                    7: [
+                        { x: -55, y: 141 },
+                        { x: 46,  y: 150 },
+                        { x: -16, y: 178 },
+                        { x: 51,  y: 197 },
+                        { x: -47, y: 218 },
+                        { x: 15,  y: 235 },
+                        { x: -18, y: 258 }
+                    ]
+                }
+
+                const safeCount = Math.max(1, Math.min(7, count))
+                const points = layouts[safeCount]
+                return points[Math.max(0, Math.min(index, points.length - 1))]
             }
 
             function beginWorkspaceDrag(workspaceId, px, py) {
@@ -4201,6 +4363,174 @@ ShellRoot {
 
                 /*
                  * --------------------------------------------------
+                 * BALLOON LANDING FIELD
+                 * --------------------------------------------------
+                 *
+                 * Balloons deliberately use a different destination metaphor
+                 * from Kite (clouds) and Pizza (destination indicator). The field
+                 * gently breathes while the pointer hovers over a valid
+                 * destination.
+                 */
+                Item {
+                    id: balloonLandingField
+
+                    visible:
+                        root.activeDeliveryAnimation === "balloons"
+                        && root.workspaceDragTarget > 0
+
+                    width: 118
+                    height: 58
+                    z: 1
+
+                    property real targetAngle:
+                        root.workspaceDragTarget > 0
+                        ? -Math.PI / 2
+                          + (
+                              (root.workspaceDragTarget - 0.5)
+                              * (
+                                  (Math.PI * 2)
+                                  / root.displayedWorkspaceCount
+                              )
+                            )
+                        : 0
+
+                    x:
+                        root.centerX
+                        + Math.cos(targetAngle)
+                          * (root.innerOuterRadius + 44)
+                        - width / 2
+
+                    y:
+                        root.centerY
+                        + Math.sin(targetAngle)
+                          * (root.innerOuterRadius + 44)
+                        - height / 2
+
+                    opacity:
+                        visible ? 0.96 : 0.0
+
+                    scale:
+                        visible
+                        ? (
+                            1.0
+                            + Math.sin(
+                                root.workspaceTrailPulse
+                                * Math.PI * 2
+                                * 0.67
+                            ) * 0.035
+                          )
+                        : 0.82
+
+                    Behavior on opacity {
+                        NumberAnimation { duration: 160 }
+                    }
+
+                    Behavior on scale {
+                        NumberAnimation {
+                            duration: 180
+                            easing.type: Easing.OutBack
+                        }
+                    }
+
+                    /*
+                     * Grass/landing strip — theme-derived rather than
+                     * hard-coded green.
+                     */
+                    Rectangle {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+
+                        width: 94
+                        height: 20
+                        radius: 10
+
+                        color:
+                            root.mixThemeColors(
+                                root.balloonLandingGlow,
+                                root.bubbleBackground,
+                                root.derivedPaletteIsDark ? 0.18 : 0.08,
+                                0.94
+                            )
+
+                        border.width: 1.5
+                        border.color: root.radialBrightColor
+                    }
+
+                    /*
+                     * Simple landing marker.
+                     */
+                    Rectangle {
+                        x: 55
+                        y: 4
+                        width: 3
+                        height: 38
+                        radius: 2
+                        color: root.radialBrightColor
+                    }
+
+                    Rectangle {
+                        x: 58
+                        y: 6
+                        width: 27
+                        height: 15
+                        radius: 3
+
+                        color: root.balloonAccentDark
+
+                        rotation:
+                            Math.sin(
+                                root.workspaceTrailPulse
+                                * Math.PI * 2
+                                * 0.73
+                            ) * 5
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "LAND"
+                            color: theme.background
+                            font.pixelSize: 7
+                            font.bold: true
+                        }
+                    }
+
+                    /*
+                     * Tiny runway lights.
+                     */
+                    Repeater {
+                        model: 4
+
+                        Rectangle {
+                            required property int index
+
+                            width: 5
+                            height: 5
+                            radius: 3
+
+                            x: 18 + index * 20
+                            y: 44
+
+                            color:
+                                index % 2 === 0
+                                ? root.radialSunColor
+                                : root.radialSkyColor
+
+                            opacity:
+                                0.55
+                                + Math.max(
+                                    0,
+                                    Math.sin(
+                                        root.workspaceTrailPulse
+                                        * Math.PI * 2
+                                        * (0.82 + index * 0.07)
+                                        + index
+                                    )
+                                  ) * 0.42
+                        }
+                    }
+                }
+
+                /*
+                 * --------------------------------------------------
                  * PIZZA DELIVERY — ALTERNATE MOVE ANIMATION
                  * --------------------------------------------------
                  *
@@ -5323,6 +5653,715 @@ ShellRoot {
                 }
             }
 
+                /*
+                 * --------------------------------------------------
+                 * BALLOON CONVOY — WORKSPACE MOVE ANIMATION #3
+                 * --------------------------------------------------
+                 *
+                 * Big balloon = workspace.
+                 * Small tethered balloons = windows.
+                 * Same application -> same stable derived color.
+                 * Different applications -> distinct theme-derived variants.
+                 */
+                Item {
+                    id: balloonWorkspaceGhost
+
+                    width: 220
+                    height: 300
+                    z: 4
+
+                    visible:
+                        root.activeDeliveryAnimation === "balloons"
+
+                    x: root.workspaceDragX - width / 2
+                    y: root.workspaceDragY - 86
+
+                    opacity: root.workspaceGhostOpacity
+
+                    /*
+                     * Gentle balloon inflation/float. During active drag it
+                     * breathes subtly; while parked for confirmation it settles.
+                     */
+                    scale:
+                        root.workspaceGhostScale
+                        * (
+                            root.workspaceDragActive
+                            ? (
+                                1.0
+                                + Math.sin(
+                                    root.workspaceTrailPulse
+                                    * Math.PI * 2
+                                    * 0.77
+                                  ) * 0.025
+                              )
+                            : 1.0
+                          )
+
+                    rotation:
+                        root.workspaceDragActive
+                        ? (
+                            root.workspaceDragTilt * 0.34
+                            + Math.sin(
+                                root.workspaceTrailPulse
+                                * Math.PI * 2
+                                * 0.63
+                              ) * 2.8
+                          )
+                        : 0
+
+                    Behavior on x {
+                        enabled: root.workspaceDragAnimating
+                        NumberAnimation {
+                            duration: 280
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+
+                    Behavior on y {
+                        enabled: root.workspaceDragAnimating
+                        NumberAnimation {
+                            duration: 280
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+
+                    Behavior on opacity {
+                        NumberAnimation { duration: 180 }
+                    }
+
+                    Behavior on rotation {
+                        NumberAnimation {
+                            duration: 150
+                            easing.type: Easing.OutCubic
+                        }
+                    }
+
+                    /*
+                     * Main workspace balloon.
+                     */
+                    Item {
+                        id: mainWorkspaceBalloon
+
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        y: 4
+                        width: 118
+                        height: 144
+
+                        /*
+                         * Soft buoyant sway. Two unrelated frequencies keep
+                         * the motion from looking mechanically symmetrical.
+                         */
+                        x:
+                            (parent.width - width) / 2
+                            + Math.sin(
+                                root.workspaceTrailPulse
+                                * Math.PI * 2
+                                * 0.59
+                              ) * 5
+                            + Math.sin(
+                                root.workspaceTrailPulse
+                                * Math.PI * 2
+                                * 1.31
+                                + 1.2
+                              ) * 2
+
+                        Item {
+                            id: balloonEnvelope
+
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            y: 0
+
+                            width: 112
+                            height: 126
+
+                            Canvas {
+                                anchors.fill: parent
+
+                                onPaint: {
+                                    const ctx = getContext("2d")
+                                    ctx.reset()
+
+                                    const w = width
+                                    const h = height
+                                    const cx = w / 2
+
+                                    /*
+                                     * Classic hot-air-balloon silhouette:
+                                     * rounded upper body with a narrower neck.
+                                     */
+                                    ctx.beginPath()
+                                    ctx.moveTo(cx, 3)
+                                    ctx.bezierCurveTo(
+                                        w * 0.83, 4,
+                                        w * 0.97, h * 0.31,
+                                        w * 0.86, h * 0.57
+                                    )
+                                    ctx.bezierCurveTo(
+                                        w * 0.78, h * 0.77,
+                                        w * 0.64, h * 0.88,
+                                        w * 0.57, h * 0.92
+                                    )
+                                    ctx.lineTo(w * 0.43, h * 0.92)
+                                    ctx.bezierCurveTo(
+                                        w * 0.36, h * 0.88,
+                                        w * 0.22, h * 0.77,
+                                        w * 0.14, h * 0.57
+                                    )
+                                    ctx.bezierCurveTo(
+                                        w * 0.03, h * 0.31,
+                                        w * 0.17, 4,
+                                        cx, 3
+                                    )
+                                    ctx.closePath()
+
+                                    ctx.fillStyle =
+                                        root.balloonMainColor
+
+                                    ctx.fill()
+
+                                    ctx.strokeStyle =
+                                        root.balloonMainHighlight
+                                    ctx.lineWidth = 3
+                                    ctx.stroke()
+
+                                    /*
+                                     * Vertical envelope panels add depth and
+                                     * make the shape read as a balloon rather
+                                     * than a circle.
+                                     */
+                                    const panelXs = [
+                                        w * 0.33,
+                                        w * 0.50,
+                                        w * 0.67
+                                    ]
+
+                                    for (let i = 0; i < panelXs.length; ++i) {
+                                        const px = panelXs[i]
+
+                                        ctx.beginPath()
+                                        ctx.moveTo(cx, 7)
+                                        ctx.bezierCurveTo(
+                                            px,
+                                            h * 0.22,
+                                            px,
+                                            h * 0.62,
+                                            cx,
+                                            h * 0.91
+                                        )
+
+                                        ctx.strokeStyle =
+                                            i === 1
+                                            ? root.balloonMainHighlight
+                                            : (
+                                                i % 2 === 0
+                                                ? root.balloonMainPanelAlt
+                                                : root.balloonMainHighlight
+                                              )
+
+                                        ctx.globalAlpha =
+                                            i === 1 ? 0.46 : 0.30
+
+                                        ctx.lineWidth =
+                                            i === 1 ? 1.7 : 1.2
+
+                                        ctx.stroke()
+                                    }
+
+                                    ctx.globalAlpha = 1
+                                }
+                            }
+
+                            /*
+                             * Soft upper-left shine.
+                             */
+                            Rectangle {
+                                x: 23
+                                y: 17
+                                width: 23
+                                height: 60
+                                radius: 13
+
+                                color: root.balloonMainHighlight
+                                opacity: 0.28
+                                rotation: 10
+                            }
+
+                            Rectangle {
+                                anchors.centerIn: parent
+
+                                width: 39
+                                height: 39
+                                radius: 20
+
+                                color:
+                                    root.mixThemeColors(
+                                        root.bubbleBackground,
+                                        root.balloonSecondaryDark,
+                                        0.18,
+                                        0.98
+                                    )
+
+                                border.width: 2
+                                border.color: root.balloonMainHighlight
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: root.workspaceDragSource
+                                    color: root.foregroundColor
+                                    font.pixelSize: 18
+                                    font.bold: true
+                                }
+                            }
+                        }
+
+                        /*
+                         * Basket ropes.
+                         */
+                        Rectangle {
+                            x: 45
+                            y: 100
+                            width: 2
+                            height: 24
+                            color: root.radialBrightColor
+                            rotation: -10
+                        }
+
+                        Rectangle {
+                            x: 70
+                            y: 100
+                            width: 2
+                            height: 24
+                            color: root.radialBrightColor
+                            rotation: 10
+                        }
+
+                        Item {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            y: 122
+                            width: 42
+                            height: 28
+
+                            /*
+                             * Basket rim.
+                             */
+                            Rectangle {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                y: 0
+
+                                width: 42
+                                height: 7
+                                radius: 4
+
+                                color: root.balloonBasketRim
+
+                                border.width: 1
+                                border.color: root.radialBrightColor
+                            }
+
+                            /*
+                             * Basket body.
+                             */
+                            Rectangle {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                y: 5
+
+                                width: 36
+                                height: 21
+                                radius: 4
+
+                                color: root.balloonBasketBase
+
+                                border.width: 1.3
+                                border.color:
+                                    root.mixThemeColors(
+                                        root.radialDeepColor,
+                                        root.foregroundColor,
+                                        0.22,
+                                        0.95
+                                    )
+
+                                /*
+                                 * Horizontal weave.
+                                 */
+                                Repeater {
+                                    model: 3
+
+                                    Rectangle {
+                                        required property int index
+
+                                        x: 2
+                                        y: 4 + index * 6
+
+                                        width: parent.width - 4
+                                        height: 2
+                                        radius: 1
+
+                                        color:
+                                            index % 3 === 0
+                                            ? root.balloonBasketHighlight
+                                            : (
+                                                index % 3 === 1
+                                                ? root.balloonBasketRim
+                                                : root.balloonAccentDark
+                                              )
+
+                                        opacity: 0.42
+                                    }
+                                }
+
+                                /*
+                                 * Vertical weave.
+                                 */
+                                Repeater {
+                                    model: 4
+
+                                    Rectangle {
+                                        required property int index
+
+                                        x: 5 + index * 7
+                                        y: 2
+
+                                        width: 2
+                                        height: parent.height - 4
+                                        radius: 1
+
+                                        color:
+                                            index % 2 === 0
+                                            ? root.balloonAccentDark
+                                            : root.balloonSecondaryDark
+
+                                        opacity: 0.32
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    /*
+                     * Passenger tethers. Each window gets its own string and
+                     * independent sway phase before its app balloon is drawn.
+                     */
+                    Repeater {
+                        model: root.workspaceDragToppings.length
+
+                        Item {
+                            required property int index
+
+                            property var topping:
+                                root.workspaceDragToppings[index]
+
+                            property var basePoint:
+                                root.balloonPassengerPoint(
+                                    index,
+                                    root.workspaceDragToppings.length
+                                )
+
+                            property real windX:
+                                (
+                                    Math.sin(
+                                        root.workspaceTrailPulse
+                                        * Math.PI * 2
+                                        * (0.61 + index * 0.079)
+                                        + index * 1.37
+                                    )
+                                    + 0.42
+                                      * Math.sin(
+                                          root.workspaceTrailPulse
+                                          * Math.PI * 2
+                                          * 1.43
+                                          - index * 0.81
+                                      )
+                                )
+                                * (
+                                    6
+                                    + Math.min(
+                                        root.workspaceDragSpeed,
+                                        14
+                                      ) * 0.24
+                                )
+
+                            property real windY:
+                                Math.cos(
+                                    root.workspaceTrailPulse
+                                    * Math.PI * 2
+                                    * (0.53 + index * 0.061)
+                                    + index * 0.93
+                                ) * 4
+
+                            property real balloonX:
+                                parent.width / 2
+                                + basePoint.x
+                                + windX
+
+                            property real balloonY:
+                                basePoint.y
+                                + windY
+
+                            /*
+                             * Tether line from main balloon basket toward
+                             * this passenger balloon.
+                             */
+                            Rectangle {
+                                property real startX:
+                                    balloonWorkspaceGhost.width / 2
+
+                                property real startY: 143
+
+                                property real dx:
+                                    parent.balloonX - startX
+
+                                property real dy:
+                                    parent.balloonY - startY
+
+                                x: startX
+                                y: startY
+
+                                width:
+                                    Math.sqrt(
+                                        dx * dx
+                                        + dy * dy
+                                    )
+
+                                height: 1.5
+                                radius: 1
+
+                                color:
+                                    root.appVariantOutline(
+                                        parent.topping
+                                        ? parent.topping.key
+                                        : "app"
+                                    )
+
+                                opacity: 0.62
+
+                                rotation:
+                                    Math.atan2(dy, dx)
+                                    * 180 / Math.PI
+
+                                transformOrigin: Item.Left
+                            }
+
+                            /*
+                             * Individual app balloon.
+                             */
+                            Item {
+                                width:
+                                    parent.topping
+                                    && parent.topping.overflow
+                                    ? 35
+                                    : 42
+
+                                height:
+                                    parent.topping
+                                    && parent.topping.overflow
+                                    ? 46
+                                    : 54
+
+                                x:
+                                    parent.balloonX
+                                    - width / 2
+
+                                y:
+                                    parent.balloonY
+                                    - height / 2
+
+                                rotation:
+                                    Math.sin(
+                                        root.workspaceTrailPulse
+                                        * Math.PI * 2
+                                        * (0.69 + parent.index * 0.071)
+                                        + parent.index
+                                    ) * 6
+
+                                Item {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    y: 0
+
+                                    width: parent.width
+                                    height: parent.width + 8
+
+                                    Canvas {
+                                        anchors.fill: parent
+
+                                        onPaint: {
+                                            const ctx = getContext("2d")
+                                            ctx.reset()
+
+                                            const w = width
+                                            const h = height
+                                            const cx = w / 2
+
+                                            const fill =
+                                                parent.parent.parent.topping
+                                                && parent.parent.parent.topping.overflow
+                                                ? root.bubbleBackground
+                                                : root.balloonVariantColor(
+                                                    parent.parent.parent.topping
+                                                    ? parent.parent.parent.topping.key
+                                                    : "app"
+                                                  )
+
+                                            const outline =
+                                                parent.parent.parent.topping
+                                                && parent.parent.parent.topping.overflow
+                                                ? root.radialSunColor
+                                                : root.balloonVariantOutline(
+                                                    parent.parent.parent.topping
+                                                    ? parent.parent.parent.topping.key
+                                                    : "app"
+                                                  )
+
+                                            ctx.beginPath()
+                                            ctx.moveTo(cx, 1)
+                                            ctx.bezierCurveTo(
+                                                w * 0.86, 2,
+                                                w * 0.98, h * 0.33,
+                                                w * 0.82, h * 0.62
+                                            )
+                                            ctx.bezierCurveTo(
+                                                w * 0.71, h * 0.81,
+                                                w * 0.59, h * 0.90,
+                                                cx, h * 0.94
+                                            )
+                                            ctx.bezierCurveTo(
+                                                w * 0.41, h * 0.90,
+                                                w * 0.29, h * 0.81,
+                                                w * 0.18, h * 0.62
+                                            )
+                                            ctx.bezierCurveTo(
+                                                w * 0.02, h * 0.33,
+                                                w * 0.14, 2,
+                                                cx, 1
+                                            )
+                                            ctx.closePath()
+
+                                            ctx.fillStyle = fill
+                                            ctx.fill()
+
+                                            ctx.strokeStyle = outline
+                                            ctx.lineWidth = 2
+                                            ctx.stroke()
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        x: 7
+                                        y: 7
+                                        width: 8
+                                        height: 18
+                                        radius: 5
+
+                                        color: root.balloonMainHighlight
+                                        opacity: 0.42
+                                        rotation: 17
+                                    }
+
+                                    Rectangle {
+                                        anchors.centerIn: parent
+                                        anchors.verticalCenterOffset: -2
+
+                                        width: parent.width - 8
+                                        height: width
+                                        radius: width / 2
+
+                                        visible:
+                                            parent.parent.parent.topping
+                                            && !parent.parent.parent.topping.overflow
+                                            && parent.parent.parent.topping.icon
+
+                                        color:
+                                            Qt.rgba(
+                                                root.bubbleBackground.r,
+                                                root.bubbleBackground.g,
+                                                root.bubbleBackground.b,
+                                                0.42
+                                            )
+
+                                        border.width: 1
+                                        border.color:
+                                            Qt.rgba(
+                                                root.foregroundColor.r,
+                                                root.foregroundColor.g,
+                                                root.foregroundColor.b,
+                                                0.18
+                                            )
+                                    }
+
+                                    Image {
+                                        anchors.centerIn: parent
+                                        anchors.verticalCenterOffset: -2
+
+                                        width: parent.width - 7
+                                        height: width
+
+                                        source:
+                                            parent.parent.parent.topping
+                                            && !parent.parent.parent.topping.overflow
+                                            ? parent.parent.parent.topping.icon
+                                            : ""
+
+                                        visible:
+                                            parent.parent.parent.topping
+                                            && !parent.parent.parent.topping.overflow
+                                            && source.toString().length > 0
+
+                                        fillMode: Image.PreserveAspectFit
+                                        smooth: true
+                                        mipmap: true
+                                    }
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        anchors.verticalCenterOffset: -2
+
+                                        visible:
+                                            parent.parent.parent.topping
+                                            && (
+                                                parent.parent.parent.topping.overflow
+                                                || !parent.parent.parent.topping.icon
+                                              )
+
+                                        text:
+                                            !parent.parent.parent.topping
+                                            ? ""
+                                            : (
+                                                parent.parent.parent.topping.overflow
+                                                ? "+" + parent.parent.parent.topping.count
+                                                : parent.parent.parent.topping.initial
+                                              )
+
+                                        color: root.foregroundColor
+                                        font.pixelSize: 10
+                                        font.bold: true
+                                    }
+                                }
+
+                                /*
+                                 * Tiny knot at the bottom of each balloon.
+                                 */
+                                Rectangle {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    y: parent.width - 2
+                                    width: 7
+                                    height: 7
+
+                                    rotation: 45
+
+                                    color:
+                                        parent.parent.topping
+                                        && parent.parent.topping.overflow
+                                        ? root.radialSunColor
+                                        : root.balloonVariantColor(
+                                            parent.parent.topping
+                                            ? parent.parent.topping.key
+                                            : "app"
+                                          )
+                                }
+                            }
+                        }
+                    }
+                }
+
             Rectangle {
                 id: workspaceMoveConfirmCard
                 z: 970
@@ -5353,7 +6392,11 @@ ShellRoot {
                         text:
                             root.activeDeliveryAnimation === "pizza"
                             ? "Deliver the whole pizza? 🍕"
-                            : "Ready to let the whole crew fly? 🪁"
+                            : (
+                                root.activeDeliveryAnimation === "balloons"
+                                ? "Ready to relocate the balloon crew? 🎈"
+                                : "Ready to let the whole crew fly? 🪁"
+                              )
                         color: root.foregroundColor
                         font.pixelSize: 16
                         font.bold: true
@@ -5376,16 +6419,30 @@ ShellRoot {
                                 + root.workspaceDragTarget
                               )
                             : (
-                                root.workspaceDragWindowCount
-                                + (
-                                    root.workspaceDragWindowCount === 1
-                                    ? " window"
-                                    : " windows"
+                                root.activeDeliveryAnimation === "balloons"
+                                ? (
+                                    root.workspaceDragWindowCount
+                                    + (
+                                        root.workspaceDragWindowCount === 1
+                                        ? " window floating over  •  Workspace "
+                                        : " windows floating over  •  Workspace "
+                                      )
+                                    + root.workspaceDragSource
+                                    + " → "
+                                    + root.workspaceDragTarget
                                   )
-                                + " ready for takeoff  •  Workspace "
-                                + root.workspaceDragSource
-                                + " → "
-                                + root.workspaceDragTarget
+                                : (
+                                    root.workspaceDragWindowCount
+                                    + (
+                                        root.workspaceDragWindowCount === 1
+                                        ? " window"
+                                        : " windows"
+                                      )
+                                    + " ready for takeoff  •  Workspace "
+                                    + root.workspaceDragSource
+                                    + " → "
+                                    + root.workspaceDragTarget
+                                  )
                               )
 
                         color:
@@ -5401,7 +6458,11 @@ ShellRoot {
                         text:
                             root.activeDeliveryAnimation === "pizza"
                             ? "Fresh delivery incoming. 🍕"
-                            : "New workspace, new skies. ✨"
+                            : (
+                                root.activeDeliveryAnimation === "balloons"
+                                ? "Clear skies. Soft landing. ✨"
+                                : "New workspace, new skies. ✨"
+                              )
 
                         color:
                             root.mutedColor
@@ -5434,7 +6495,11 @@ ShellRoot {
                                 text:
                                     root.activeDeliveryAnimation === "pizza"
                                     ? "Deliver 🍕"
-                                    : "Let it Fly! 🪁"
+                                    : (
+                                        root.activeDeliveryAnimation === "balloons"
+                                        ? "Land 'em! 🎈"
+                                        : "Let it Fly! 🪁"
+                                      )
                                 color: root.foregroundColor
                                 font.pixelSize: 12
                                 font.bold: true
@@ -5602,7 +6667,11 @@ ShellRoot {
                             ? (
                                 root.activeDeliveryAnimation === "pizza"
                                 ? "Pizza Delivery 🍕"
-                                : "Kite Delivery 🪁"
+                                : (
+                                    root.activeDeliveryAnimation === "balloons"
+                                    ? "Balloon Convoy 🎈"
+                                    : "Kite Delivery 🪁"
+                                  )
                               )
                             : (root.dragActive ? "Move Window" : "Overview")
 
@@ -5627,9 +6696,17 @@ ShellRoot {
                                     : "Taking the whole pizza…"
                                   )
                                 : (
-                                    root.workspaceDragTarget > 0
-                                    ? "Workspace " + root.workspaceDragTarget + " is ready"
-                                    : "Take the whole crew…"
+                                    root.activeDeliveryAnimation === "balloons"
+                                    ? (
+                                        root.workspaceDragTarget > 0
+                                        ? "Workspace " + root.workspaceDragTarget + " cleared for landing"
+                                        : "Up, up and away…"
+                                      )
+                                    : (
+                                        root.workspaceDragTarget > 0
+                                        ? "Workspace " + root.workspaceDragTarget + " is ready"
+                                        : "Take the whole crew…"
+                                      )
                                   )
                               )
                             : (root.dragActive
@@ -6208,7 +7285,11 @@ ShellRoot {
                         text:
                             root.settingsPreviewAnimation === "pizza"
                             ? "🍕  PIZZA"
-                            : "🪁  KITE"
+                            : (
+                                root.settingsPreviewAnimation === "balloons"
+                                ? "🎈  BALLOONS"
+                                : "🪁  KITE"
+                              )
 
                         color: root.radialSunColor
                         font.pixelSize: 11
@@ -6217,40 +7298,140 @@ ShellRoot {
                         z: 7
                     }
 
-                    Rectangle {
+                    /*
+                     * Save action as a watch crown.
+                     *
+                     * Moving the confirmation control out of the lower
+                     * animation arc keeps Pizza unobstructed and reinforces
+                     * the watch-face metaphor of the settings dial.
+                     */
+                    Item {
                         id: settingsDoneButton
 
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        anchors.bottom: parent.bottom
-                        anchors.bottomMargin: 11
+                        width: 46
+                        height: 46
 
-                        width: 30
-                        height: 30
-                        radius: width / 2
+                        /*
+                         * Center the crown on the right-hand watch case.
+                         * A small outward offset makes it read as a physical
+                         * control attached to the dial rather than another
+                         * selector inside the face.
+                         */
+                        x: parent.width - width / 2 + 5
+                        y: parent.height / 2 - height / 2
 
-                        z: 8
+                        z: 12
 
-                        color:
-                            settingsDoneMouse.containsMouse
-                            ? root.accentColor
-                            : root.bubbleBackground
+                        /*
+                         * Short stem joining the crown to the watch case.
+                         */
+                        Rectangle {
+                            anchors.verticalCenter: parent.verticalCenter
 
-                        border.width: 1
-                        border.color: root.accentColor
+                            x: -10
+                            width: 18
+                            height: 16
+                            radius: 5
 
-                        Text {
+                            color:
+                                root.mixThemeColors(
+                                    root.bubbleBackground,
+                                    root.accentColor,
+                                    0.18,
+                                    1.0
+                                )
+
+                            border.width: 1
+                            border.color: root.accentSecondaryColor
+                        }
+
+                        /*
+                         * Main crown button.
+                         */
+                        Rectangle {
                             anchors.centerIn: parent
-                            text: "✓"
+
+                            width: 40
+                            height: 40
+                            radius: width / 2
+
                             color:
                                 settingsDoneMouse.containsMouse
-                                ? theme.background
-                                : root.foregroundColor
-                            font.pixelSize: 15
-                            font.bold: true
+                                ? root.mixThemeColors(
+                                    root.bubbleBackground,
+                                    root.accentColor,
+                                    0.30,
+                                    1.0
+                                  )
+                                : root.bubbleBackground
+
+                            border.width: 2
+                            border.color:
+                                settingsDoneMouse.containsMouse
+                                ? root.radialBrightColor
+                                : root.accentColor
+
+                            scale:
+                                settingsDoneMouse.pressed
+                                ? 0.94
+                                : (
+                                    settingsDoneMouse.containsMouse
+                                    ? 1.05
+                                    : 1.0
+                                  )
+
+                            Behavior on scale {
+                                NumberAnimation {
+                                    duration: 110
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+
+                            Behavior on color {
+                                ColorAnimation {
+                                    duration: 130
+                                }
+                            }
+
+                            Text {
+                                anchors.centerIn: parent
+
+                                text: "✓"
+
+                                color:
+                                    settingsDoneMouse.containsMouse
+                                    ? root.radialBrightColor
+                                    : root.foregroundColor
+
+                                font.pixelSize: 19
+                                font.bold: true
+                            }
+                        }
+
+                        /*
+                         * Small crown ridges on the outer edge.
+                         */
+                        Repeater {
+                            model: 4
+
+                            Rectangle {
+                                required property int index
+
+                                x: 40
+                                y: 10 + index * 7
+
+                                width: 5
+                                height: 2
+                                radius: 1
+
+                                color: root.accentSecondaryColor
+                                opacity: 0.60
+                            }
                         }
 
                         MouseArea {
                             id: settingsDoneMouse
+
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
