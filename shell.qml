@@ -86,6 +86,13 @@ ShellRoot {
                 pendingFocusClient = null
                 closing = false
 
+                /*
+                 * Arrival highlighting is scoped to one overview session.
+                 * Always begin a newly opened overview with a clean state,
+                 * regardless of which close path was used previously.
+                 */
+                clearArrivalWindows()
+
                 presentationProgress = 0.0
                 overviewWindow.visible = true
                 forceActiveFocus()
@@ -149,6 +156,7 @@ ShellRoot {
 
                 onTriggered: {
                     overviewWindow.visible = false
+                    clearArrivalWindows()
                     closing = false
                     dispatchPendingFocus()
                 }
@@ -1479,6 +1487,7 @@ ShellRoot {
                 closing = false
                 presentationProgress = 0.0
                 overviewWindow.visible = false
+                clearArrivalWindows()
             }
 
             function moveClientToWorkspace(client, workspaceId) {
